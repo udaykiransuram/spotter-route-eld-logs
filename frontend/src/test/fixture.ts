@@ -1,0 +1,105 @@
+import type { TripPlan } from "../types";
+
+export const tripPlanFixture: TripPlan = {
+  id: "plan-1",
+  created_at: "2026-08-25T10:00:00Z",
+  request: {
+    current_location: { id: "r", label: "Richmond, VA", lat: 37.5407, lon: -77.436 },
+    pickup_location: { id: "n", label: "Nashville, TN", lat: 36.1627, lon: -86.7816 },
+    dropoff_location: { id: "d", label: "Dallas, TX", lat: 32.7767, lon: -96.797 },
+    current_cycle_used_hours: 30,
+    departure_at: "2026-08-25T06:00",
+    home_terminal_timezone: "America/New_York",
+    metadata: {
+      driver_name: "Alex Driver",
+      carrier_name: "Spotter Logistics",
+      vehicle_number: "101",
+      shipping_document_number: "BOL-9921",
+    },
+  },
+  route: {
+    type: "Feature",
+    geometry: {
+      type: "LineString",
+      coordinates: [[-77.436, 37.5407], [-86.7816, 36.1627], [-96.797, 32.7767]],
+    },
+    properties: { distance_miles: 1350, duration_hours: 24.5 },
+  },
+  instructions: [
+    { id: "i1", leg_index: 0, sequence: 1, instruction: "Take I-64 W toward Knoxville", distance_miles: 490, duration_minutes: 530, start_mile: 0, end_mile: 490 },
+    { id: "i2", leg_index: 1, sequence: 2, instruction: "Continue on I-40 W toward Dallas", distance_miles: 860, duration_minutes: 940, start_mile: 490, end_mile: 1350 },
+  ],
+  summary: {
+    distance_miles: 1350,
+    driving_hours: 24.5,
+    total_elapsed_hours: 47.5,
+    trip_days: 2,
+    stop_count: 4,
+    departure_at: "2026-08-25T10:00:00Z",
+    arrival_at: "2026-08-27T09:30:00Z",
+  },
+  stops: [
+    { id: "s1", sequence: 1, type: "break", label: "Knoxville, TN", lat: 35.9606, lon: -83.9207, scheduled_at: "2026-08-25T17:30:00Z", duration_minutes: 30, duty_status: "off_duty", reason: "Required 30-minute break after 8 hours of driving", route_mile: 420 },
+    { id: "s2", sequence: 2, type: "pickup", label: "Nashville, TN", lat: 36.1627, lon: -86.7816, scheduled_at: "2026-08-25T19:00:00Z", duration_minutes: 60, duty_status: "on_duty", reason: "Assessment assumes one hour for pickup", route_mile: 490 },
+    { id: "s3", sequence: 3, type: "rest", label: "Little Rock, AR", lat: 34.7465, lon: -92.2896, scheduled_at: "2026-08-26T03:00:00Z", duration_minutes: 600, duty_status: "off_duty", reason: "10 consecutive hours off duty resets daily clocks", route_mile: 950 },
+    { id: "s4", sequence: 4, type: "dropoff", label: "Dallas, TX", lat: 32.7767, lon: -96.797, scheduled_at: "2026-08-27T08:30:00Z", duration_minutes: 60, duty_status: "on_duty", reason: "Assessment assumes one hour for drop-off", route_mile: 1350 },
+  ],
+  duty_events: [
+    { id: "e1", status: "driving", event_type: "driving", start_at: "2026-08-25T10:00:00Z", end_at: "2026-08-25T17:30:00Z", start_location: "Richmond, VA", end_location: "Knoxville, TN", start_coordinates: [-77.436, 37.5407], end_coordinates: [-83.9207, 35.9606], start_mile: 0, end_mile: 420, miles_driven: 420, note: "Drive toward pickup" },
+    { id: "e2", status: "off_duty", event_type: "break", start_at: "2026-08-25T17:30:00Z", end_at: "2026-08-25T18:00:00Z", start_location: "Knoxville, TN", end_location: "Knoxville, TN", start_coordinates: [-83.9207, 35.9606], end_coordinates: [-83.9207, 35.9606], start_mile: 420, end_mile: 420, miles_driven: 0, note: "30-minute break" },
+  ],
+  daily_logs: [
+    {
+      date: "2026-08-25",
+      timezone: "America/New_York",
+      from_location: "Richmond, VA",
+      to_location: "Nashville, TN",
+      total_miles: 490,
+      status_totals: { off_duty: 14.5, sleeper_berth: 0, driving: 8.5, on_duty: 1 },
+      cycle_used_hours: 39.5,
+      recap: { on_duty_today: 9.5, cycle_used_at_start: 30, cycle_used_at_end: 39.5, remaining_cycle_hours: 30.5, restart_completed: false },
+      segments: [
+        { status: "off_duty", start_minute: 0, end_minute: 360 },
+        { status: "driving", start_minute: 360, end_minute: 810 },
+        { status: "off_duty", start_minute: 810, end_minute: 840 },
+        { status: "driving", start_minute: 840, end_minute: 900 },
+        { status: "on_duty", start_minute: 900, end_minute: 960 },
+        { status: "off_duty", start_minute: 960, end_minute: 1440 },
+      ],
+      remarks: [
+        { time: "06:00 AM", status: "driving", location: "Richmond, VA", note: "Off duty → Driving" },
+        { time: "01:30 PM", status: "off_duty", location: "Knoxville, TN", note: "Driving → Off duty" },
+        { time: "03:00 PM", status: "on_duty", location: "Nashville, TN", note: "Pickup" },
+      ],
+    },
+    {
+      date: "2026-08-26",
+      timezone: "America/New_York",
+      from_location: "Nashville, TN",
+      to_location: "Dallas, TX",
+      total_miles: 860,
+      status_totals: { off_duty: 10, sleeper_berth: 0, driving: 13.5, on_duty: 0.5 },
+      cycle_used_hours: 53.5,
+      recap: { on_duty_today: 14, cycle_used_at_start: 39.5, cycle_used_at_end: 53.5, remaining_cycle_hours: 16.5, restart_completed: false },
+      segments: [
+        { status: "off_duty", start_minute: 0, end_minute: 600 },
+        { status: "driving", start_minute: 600, end_minute: 1080 },
+        { status: "on_duty", start_minute: 1080, end_minute: 1110 },
+        { status: "driving", start_minute: 1110, end_minute: 1440 },
+      ],
+      remarks: [
+        { time: "10:00 AM", status: "driving", location: "Little Rock, AR", note: "Off duty → Driving" },
+        { time: "06:00 PM", status: "on_duty", location: "Texarkana, TX", note: "Fuel stop" },
+      ],
+    },
+  ],
+  assumptions: [
+    "Property-carrying driver",
+    "70 hour / 8 day cycle",
+    "No adverse driving conditions",
+    "Fuel at least once every 1,000 miles",
+    "1 hour for pickup and drop-off",
+  ],
+  warnings: [],
+  attribution: { routing: "Geoapify", map: "OpenFreeMap · OpenStreetMap" },
+};

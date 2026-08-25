@@ -1,0 +1,13 @@
+{
+  "name": "spotter-route-eld",
+  "private": true,
+  "packageManager": "pnpm@11.19.0",
+  "scripts": {
+    "dev": "pnpm --filter frontend dev",
+    "build": "pnpm --filter frontend build",
+    "lint": "pnpm --filter frontend lint",
+    "test": "pnpm --filter frontend test",
+    "test:e2e": "pnpm --filter frontend test:e2e",
+    "typecheck": "pnpm --filter frontend typecheck"
+  }
+}

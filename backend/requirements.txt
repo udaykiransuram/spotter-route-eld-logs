@@ -1,0 +1,7 @@
+Django>=5.2,<6.1
+djangorestframework>=3.15,<3.17
+django-cors-headers>=4.7,<5
+httpx>=0.28,<1
+gunicorn>=23,<24
+pytest>=8.3,<10
+pytest-django>=4.10,<5
