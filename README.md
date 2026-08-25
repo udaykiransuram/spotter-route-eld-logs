@@ -29,7 +29,7 @@ A stateless Django and React assessment app that builds a heavy-truck route from
 
 These values are intentionally left as placeholders until the repository, both Vercel projects, and the walkthrough are public and verified. Do not submit with placeholders remaining.
 
-- GitHub repository: **TODO — add public repository URL**
+- GitHub repository: **https://github.com/udaykiransuram/spotter-route-eld-logs**
 - Deployed frontend: **TODO — add production frontend URL**
 - Deployed API: **TODO — add production API URL**
 - Loom walkthrough: **TODO — add 3–5 minute recording URL**
