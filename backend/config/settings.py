@@ -6,6 +6,28 @@ import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+PROJECT_DIR = BASE_DIR.parent
+
+
+def load_local_env() -> None:
+    """Load local development variables without overriding deployed environment values."""
+    env_file = PROJECT_DIR / ".env"
+    if not env_file.is_file():
+        return
+
+    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line.removeprefix("export ").lstrip()
+        name, separator, value = line.partition("=")
+        if not separator or not name or not name.replace("_", "").isalnum():
+            continue
+        os.environ.setdefault(name, value.strip().strip("\"'"))
+
+
+load_local_env()
 
 
 def env_bool(name: str, default: bool = False) -> bool:
