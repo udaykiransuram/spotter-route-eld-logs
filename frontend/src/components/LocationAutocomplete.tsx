@@ -43,7 +43,7 @@ export function LocationAutocomplete({
         setOptions(suggestions);
         setOpen(true);
         setActiveIndex(suggestions.length > 0 ? 0 : -1);
-        setMessage(suggestions.length === 0 ? "No matching US locations found." : "");
+        setMessage(suggestions.length === 0 ? "No matching locations found." : "");
       } catch (requestError) {
         if ((requestError as Error).name !== "AbortError") {
           setOptions([]);
@@ -149,7 +149,7 @@ export function LocationAutocomplete({
             {options.map((option, index) => (
               <button
                 id={`${listboxId}-${index}`}
-                key={option.id ?? `${option.label}-${option.lat}-${option.lon}`}
+                key={`${option.id ?? `${option.label}-${option.lat}-${option.lon}`}-${index}`}
                 type="button"
                 role="option"
                 aria-selected={value?.id === option.id}

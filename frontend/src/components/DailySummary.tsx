@@ -11,7 +11,8 @@ export function DailySummary({ log, dayNumber }: { log: DailyLog; dayNumber: num
   ];
   const totalHours = statusRows.reduce((total, row) => total + row.value, 0);
   const cycleUsed = log.recap?.cycle_used_at_end ?? log.cycle_used_hours;
-  const cyclePercent = Math.min(100, Math.max(0, (cycleUsed / 70) * 100));
+  const boundedCycleUsed = Math.min(70, Math.max(0, cycleUsed));
+  const cyclePercent = (boundedCycleUsed / 70) * 100;
 
   return (
     <aside className="daily-summary" aria-labelledby="daily-summary-title">
@@ -52,7 +53,7 @@ export function DailySummary({ log, dayNumber }: { log: DailyLog; dayNumber: num
 
       <div className="cycle-progress">
         <div><span>70-hour cycle</span><strong>{Math.max(0, 70 - cycleUsed).toFixed(2)} h remaining</strong></div>
-        <span className="cycle-progress__track" role="progressbar" aria-label="70-hour cycle used" aria-valuemin={0} aria-valuemax={70} aria-valuenow={cycleUsed}>
+        <span className="cycle-progress__track" role="progressbar" aria-label="70-hour cycle used" aria-valuemin={0} aria-valuemax={70} aria-valuenow={boundedCycleUsed}>
           <span style={{ width: `${cyclePercent}%` }} />
         </span>
       </div>

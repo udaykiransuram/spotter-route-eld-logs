@@ -19,6 +19,8 @@ class LocationSerializer(serializers.Serializer):
 class TripMetadataSerializer(serializers.Serializer):
     driver_name = serializers.CharField(required=False, allow_blank=True, max_length=120)
     carrier_name = serializers.CharField(required=False, allow_blank=True, max_length=160)
+    main_office_address = serializers.CharField(required=False, allow_blank=True, max_length=200)
+    home_terminal_address = serializers.CharField(required=False, allow_blank=True, max_length=200)
     vehicle_number = serializers.CharField(required=False, allow_blank=True, max_length=80)
     shipping_document_number = serializers.CharField(
         required=False, allow_blank=True, max_length=100
@@ -31,9 +33,7 @@ class TripPlanRequestSerializer(serializers.Serializer):
     dropoff_location = LocationSerializer()
     current_cycle_used_hours = serializers.FloatField(min_value=0, max_value=70)
     departure_at = serializers.CharField(required=False, allow_blank=False, max_length=80)
-    home_terminal_timezone = serializers.CharField(
-        required=False, allow_blank=False, max_length=80
-    )
+    home_terminal_timezone = serializers.CharField(required=False, allow_blank=False, max_length=80)
     metadata = TripMetadataSerializer(required=False, default=dict)
 
     def validate(self, attrs: dict[str, object]) -> dict[str, object]:
@@ -60,14 +60,23 @@ class TripPlanRequestSerializer(serializers.Serializer):
                 candidate = departure.replace(tzinfo=zone)
                 # ZoneInfo accepts nonexistent spring-forward wall times. A UTC
                 # roundtrip detects those values and returns a useful field error.
-                roundtrip = (
-                    candidate.astimezone(UTC).astimezone(zone).replace(tzinfo=None)
-                )
+                roundtrip = candidate.astimezone(UTC).astimezone(zone).replace(tzinfo=None)
                 if roundtrip != departure:
                     raise serializers.ValidationError(
                         {
                             "departure_at": (
                                 "This local time does not exist in the selected timezone."
+                            )
+                        }
+                    )
+                alternative = departure.replace(tzinfo=zone, fold=1)
+                if candidate.utcoffset() != alternative.utcoffset():
+                    raise serializers.ValidationError(
+                        {
+                            "departure_at": (
+                                "This local time occurs twice because daylight saving "
+                                "time ends. Include an explicit UTC offset, such as "
+                                "-04:00 or -05:00."
                             )
                         }
                     )

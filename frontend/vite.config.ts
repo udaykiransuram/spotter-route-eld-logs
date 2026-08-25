@@ -8,6 +8,10 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
   },
+  build: {
+    // MapLibre is intentionally isolated behind the lazy-loaded results map.
+    chunkSizeWarningLimit: 1100,
+  },
   test: {
     environment: "jsdom",
     setupFiles: "./src/test/setup.ts",

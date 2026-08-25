@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
+from django.core.cache import cache
 from django.test import override_settings
 from rest_framework.test import APIClient
+from rest_framework.throttling import ScopedRateThrottle
 
+from trips.domain import DutyEvent, NearbyPlace
 from trips.providers.base import ProviderError
 from trips.providers.demo import DemoRoutingProvider
+from trips.service import TripPlannerService
 
 
 def payload() -> dict[str, object]:
@@ -34,6 +40,8 @@ def payload() -> dict[str, object]:
         "metadata": {
             "driver_name": "Alex Morgan",
             "carrier_name": "Spotter Transport",
+            "main_office_address": "100 Main Street, Richmond, VA",
+            "home_terminal_address": "200 Terminal Road, Richmond, VA",
             "vehicle_number": "TRK-204",
             "shipping_document_number": "BOL-9001",
         },
@@ -44,9 +52,7 @@ def payload() -> dict[str, object]:
 def test_health_and_location_suggestions() -> None:
     client = APIClient()
 
-    health = client.get(
-        "/api/v1/health", HTTP_ORIGIN="http://127.0.0.1:5173"
-    )
+    health = client.get("/api/v1/health", HTTP_ORIGIN="http://127.0.0.1:5173")
     suggestions = client.get("/api/v1/locations/suggest", {"q": "Dallas"})
 
     assert health.status_code == 200
@@ -75,10 +81,11 @@ def test_create_plan_contract_and_invariants() -> None:
         result["summary"]["distance_miles"]
     )
     assert all(
-        sum(log["status_totals"].values()) == pytest.approx(24)
-        for log in result["daily_logs"]
+        sum(log["status_totals"].values()) == pytest.approx(24) for log in result["daily_logs"]
     )
     assert all(log["metadata"]["driver_name"] == "Alex Morgan" for log in result["daily_logs"])
+    assert result["metadata"]["main_office_address"] == "100 Main Street, Richmond, VA"
+    assert result["metadata"]["home_terminal_address"] == "200 Terminal Road, Richmond, VA"
     assert result["notice"] == "Generated trip plan — not a certified ELD record."
     assert result["attribution"]["map"]
 
@@ -100,6 +107,10 @@ def test_timezone_is_detected_when_omitted_and_naive_time_uses_it() -> None:
         ({"current_cycle_used_hours": 70.1}, "current_cycle_used_hours"),
         ({"home_terminal_timezone": "Mars/Olympus_Mons"}, "home_terminal_timezone"),
         ({"departure_at": "not-a-date"}, "departure_at"),
+        (
+            {"metadata": {"main_office_address": "x" * 201}},
+            "metadata.main_office_address",
+        ),
         (
             {
                 "dropoff_location": {
@@ -141,11 +152,87 @@ def test_nonexistent_local_departure_time_is_rejected() -> None:
 
 
 @override_settings(USE_DEMO_PROVIDER=True)
+def test_ambiguous_local_departure_time_requires_an_explicit_offset() -> None:
+    request_payload = payload()
+    request_payload["departure_at"] = "2026-11-01T01:30"
+    response = APIClient().post("/api/v1/trip-plans", request_payload, format="json")
+
+    assert response.status_code == 400
+    assert response.json()["error"]["field"] == "departure_at"
+    assert "occurs twice" in response.json()["error"]["message"]
+    assert "explicit UTC offset" in response.json()["error"]["message"]
+
+
+@override_settings(USE_DEMO_PROVIDER=True)
+def test_auto_detected_timezone_rejects_ambiguous_local_departure_time() -> None:
+    request_payload = payload()
+    request_payload.pop("home_terminal_timezone")
+    request_payload["departure_at"] = "2026-11-01T01:30"
+    response = APIClient().post("/api/v1/trip-plans", request_payload, format="json")
+
+    assert response.status_code == 400
+    assert response.json()["error"]["field"] == "departure_at"
+    assert "occurs twice" in response.json()["error"]["message"]
+
+
+@pytest.mark.parametrize(
+    ("departure_at", "expected_utc"),
+    [
+        ("2026-11-01T01:30:00-04:00", "2026-11-01T05:30:00Z"),
+        ("2026-11-01T01:30:00-05:00", "2026-11-01T06:30:00Z"),
+    ],
+)
+@override_settings(USE_DEMO_PROVIDER=True)
+def test_ambiguous_clock_time_with_explicit_offset_is_accepted(
+    departure_at: str, expected_utc: str
+) -> None:
+    request_payload = payload()
+    request_payload["departure_at"] = departure_at
+    response = APIClient().post("/api/v1/trip-plans", request_payload, format="json")
+
+    assert response.status_code == 201
+    assert response.json()["summary"]["departure_at"] == expected_utc
+
+
+@override_settings(USE_DEMO_PROVIDER=True)
+def test_explicit_offset_is_accepted_with_auto_detected_timezone() -> None:
+    request_payload = payload()
+    request_payload.pop("home_terminal_timezone")
+    request_payload["departure_at"] = "2026-11-01T01:30:00-05:00"
+    response = APIClient().post("/api/v1/trip-plans", request_payload, format="json")
+
+    assert response.status_code == 201
+    assert response.json()["summary"]["departure_at"] == "2026-11-01T06:30:00Z"
+    assert response.json()["summary"]["home_terminal_timezone"] == "America/New_York"
+
+
+@override_settings(USE_DEMO_PROVIDER=True)
 def test_short_suggestion_query_is_rejected() -> None:
     response = APIClient().get("/api/v1/locations/suggest", {"q": "a"})
 
     assert response.status_code == 400
     assert response.json()["error"]["field"] == "q"
+
+
+@override_settings(USE_DEMO_PROVIDER=True)
+def test_location_suggestions_are_throttled_with_the_stable_error_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        ScopedRateThrottle,
+        "THROTTLE_RATES",
+        {"location_suggest": "1/minute", "trip_plan": "30/hour"},
+    )
+    cache.clear()
+
+    client = APIClient()
+    first = client.get("/api/v1/locations/suggest", {"q": "Dallas"})
+    second = client.get("/api/v1/locations/suggest", {"q": "Austin"})
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert second.json()["error"]["code"] == "throttled"
+    assert second.json()["error"]["retryable"] is True
 
 
 def test_provider_quota_error_is_normalized(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -168,3 +255,73 @@ def test_provider_quota_error_is_normalized(monkeypatch: pytest.MonkeyPatch) -> 
         "field": None,
         "retryable": True,
     }
+
+
+def test_nearby_fuel_is_a_suggestion_and_does_not_move_route_event() -> None:
+    class SuggestionProvider(DemoRoutingProvider):
+        def nearby_fuel(self, coordinate: tuple[float, float]) -> NearbyPlace:
+            return NearbyPlace("Nearby Travel Center", 35.02, -99.98)
+
+    start = datetime(2026, 8, 25, 12, tzinfo=UTC)
+    route_coordinate = (-100.0, 35.0)
+    fuel_event = DutyEvent(
+        id="fuel-1",
+        status="on_duty",
+        event_type="fuel",
+        start_at=start,
+        end_at=start + timedelta(minutes=30),
+        start_location="Route mile 950",
+        end_location="Route mile 950",
+        start_coordinates=route_coordinate,
+        end_coordinates=route_coordinate,
+        start_mile=950,
+        end_mile=950,
+        miles_driven=0,
+        note="Fuel stop scheduled before 1,000 miles.",
+    )
+    service = TripPlannerService(SuggestionProvider())
+    warnings: list[str] = []
+
+    enriched = service._enrich_stops([fuel_event], warnings)
+
+    assert enriched[0].start_coordinates == route_coordinate
+    assert enriched[0].end_coordinates == route_coordinate
+    assert enriched[0].start_location == "Route mile 950"
+    assert "Nearby fuel suggestion: Nearby Travel Center" in enriched[0].note
+    assert "mi from the scheduled route point" in enriched[0].note
+    assert "not added to route" in enriched[0].note
+    assert warnings == []
+
+
+def test_distant_fuel_suggestion_is_ignored_with_warning() -> None:
+    class DistantSuggestionProvider(DemoRoutingProvider):
+        def nearby_fuel(self, coordinate: tuple[float, float]) -> NearbyPlace:
+            return NearbyPlace("Distant Travel Center", 35.4, -99.6)
+
+    start = datetime(2026, 8, 25, 12, tzinfo=UTC)
+    route_coordinate = (-100.0, 35.0)
+    fuel_event = DutyEvent(
+        id="fuel-1",
+        status="on_duty",
+        event_type="fuel",
+        start_at=start,
+        end_at=start + timedelta(minutes=30),
+        start_location="Route mile 950",
+        end_location="Route mile 950",
+        start_coordinates=route_coordinate,
+        end_coordinates=route_coordinate,
+        start_mile=950,
+        end_mile=950,
+        miles_driven=0,
+        note="Fuel stop scheduled before 1,000 miles.",
+    )
+    service = TripPlannerService(DistantSuggestionProvider())
+    warnings: list[str] = []
+
+    enriched = service._enrich_stops([fuel_event], warnings)
+
+    assert enriched[0] == fuel_event
+    assert len(warnings) == 1
+    assert "Distant Travel Center" in warnings[0]
+    assert "outside the 5-mile fuel-suggestion radius" in warnings[0]
+    assert "not added to route" in warnings[0]

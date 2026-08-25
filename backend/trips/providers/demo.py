@@ -36,7 +36,9 @@ class DemoRoutingProvider:
 
     def suggest(self, query: str, *, limit: int = 6) -> list[Location]:
         normalized = query.casefold().strip()
-        matches = [location for location in DEMO_LOCATIONS if normalized in location.label.casefold()]
+        matches = [
+            location for location in DEMO_LOCATIONS if normalized in location.label.casefold()
+        ]
         if matches:
             return matches[:limit]
 
@@ -57,6 +59,7 @@ class DemoRoutingProvider:
 
     def route(self, waypoints: list[Location]) -> RouteResult:
         coordinates: list[tuple[float, float]] = []
+        leg_coordinates: list[tuple[tuple[float, float], ...]] = []
         legs: list[RouteLeg] = []
         instructions: list[RouteInstruction] = []
         route_mile = 0.0
@@ -69,16 +72,17 @@ class DemoRoutingProvider:
             legs.append(leg)
 
             points = 12
+            leg_path: list[tuple[float, float]] = []
             for point_index in range(points + 1):
-                if leg_index and point_index == 0:
-                    continue
                 fraction = point_index / points
-                coordinates.append(
-                    (
-                        start.lon + (end.lon - start.lon) * fraction,
-                        start.lat + (end.lat - start.lat) * fraction,
-                    )
+                coordinate = (
+                    start.lon + (end.lon - start.lon) * fraction,
+                    start.lat + (end.lat - start.lat) * fraction,
                 )
+                leg_path.append(coordinate)
+                if not coordinates or coordinate != coordinates[-1]:
+                    coordinates.append(coordinate)
+            leg_coordinates.append(tuple(leg_path))
 
             instructions.append(
                 RouteInstruction(
@@ -101,6 +105,7 @@ class DemoRoutingProvider:
             distance_miles=sum(leg.distance_miles for leg in legs),
             duration_hours=sum(leg.duration_hours for leg in legs),
             attribution=self.attribution,
+            leg_coordinates=tuple(leg_coordinates),
         )
 
     def nearby_fuel(self, coordinate: tuple[float, float]) -> NearbyPlace:

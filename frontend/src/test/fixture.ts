@@ -13,6 +13,8 @@ export const tripPlanFixture: TripPlan = {
     metadata: {
       driver_name: "Alex Driver",
       carrier_name: "Spotter Logistics",
+      main_office_address: "123 Dispatch Way, Richmond, VA 23219",
+      home_terminal_address: "880 Terminal Road, Richmond, VA 23224",
       vehicle_number: "101",
       shipping_document_number: "BOL-9921",
     },
@@ -37,6 +39,7 @@ export const tripPlanFixture: TripPlan = {
     stop_count: 4,
     departure_at: "2026-08-25T10:00:00Z",
     arrival_at: "2026-08-27T09:30:00Z",
+    home_terminal_timezone: "America/New_York",
   },
   stops: [
     { id: "s1", sequence: 1, type: "break", label: "Knoxville, TN", lat: 35.9606, lon: -83.9207, scheduled_at: "2026-08-25T17:30:00Z", duration_minutes: 30, duty_status: "off_duty", reason: "Required 30-minute break after 8 hours of driving", route_mile: 420 },

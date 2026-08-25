@@ -19,6 +19,7 @@ from trips.domain import (
 from trips.providers.base import ProviderError
 
 METERS_PER_MILE = 1609.344
+FUEL_SEARCH_RADIUS_METERS = 8000
 
 
 class GeoapifyRoutingProvider:
@@ -46,7 +47,6 @@ class GeoapifyRoutingProvider:
             "/v1/geocode/autocomplete",
             {
                 "text": query,
-                "filter": "countrycode:us",
                 "format": "json",
                 "limit": limit,
             },
@@ -78,7 +78,8 @@ class GeoapifyRoutingProvider:
 
         feature = features[0]
         properties = feature.get("properties") or {}
-        coordinates = tuple(self._flatten_geometry(feature.get("geometry") or {}))
+        geometry = feature.get("geometry") or {}
+        coordinates = tuple(self._flatten_geometry(geometry))
         if len(coordinates) < 2:
             raise ProviderError(
                 "invalid_provider_response",
@@ -87,6 +88,7 @@ class GeoapifyRoutingProvider:
 
         raw_legs = properties.get("legs") or []
         legs = self._parse_legs(raw_legs, waypoints, properties)
+        leg_coordinates = self._leg_coordinates_from_geometry(geometry, len(legs))
         instructions = self._parse_instructions(raw_legs, legs)
         distance = sum(leg.distance_miles for leg in legs)
         duration = sum(leg.duration_hours for leg in legs)
@@ -97,6 +99,7 @@ class GeoapifyRoutingProvider:
             distance_miles=distance,
             duration_hours=duration,
             attribution=self.attribution,
+            leg_coordinates=leg_coordinates,
         )
 
     def nearby_fuel(self, coordinate: tuple[float, float]) -> NearbyPlace | None:
@@ -105,7 +108,7 @@ class GeoapifyRoutingProvider:
             "/v2/places",
             {
                 "categories": "service.vehicle.fuel",
-                "filter": f"circle:{lon},{lat},40000",
+                "filter": f"circle:{lon},{lat},{FUEL_SEARCH_RADIUS_METERS}",
                 "bias": f"proximity:{lon},{lat}",
                 "limit": 1,
             },
@@ -215,6 +218,25 @@ class GeoapifyRoutingProvider:
                     if point != previous:
                         yield point
                     previous = point
+
+    @staticmethod
+    def _leg_coordinates_from_geometry(
+        geometry: dict[str, Any], leg_count: int
+    ) -> tuple[tuple[tuple[float, float], ...], ...]:
+        if geometry.get("type") != "MultiLineString":
+            return ()
+        lines = geometry.get("coordinates") or []
+        if len(lines) != leg_count:
+            return ()
+
+        leg_coordinates: list[tuple[tuple[float, float], ...]] = []
+        for line in lines:
+            if len(line) < 2:
+                return ()
+            leg_coordinates.append(
+                tuple((float(coordinate[0]), float(coordinate[1])) for coordinate in line)
+            )
+        return tuple(leg_coordinates)
 
     @staticmethod
     def _parse_legs(

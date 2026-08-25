@@ -10,13 +10,14 @@ from zoneinfo import ZoneInfo
 
 from django.conf import settings
 
-from trips.domain import DutyEvent, Location, ReverseLocation
+from trips.domain import DutyEvent, Location, ReverseLocation, haversine_miles
 from trips.logs import build_daily_logs
 from trips.providers import DemoRoutingProvider, GeoapifyRoutingProvider, RoutingProvider
 from trips.providers.base import ProviderError
 from trips.scheduler import schedule_route
 
 MAP_ATTRIBUTION = "© OpenFreeMap © OpenStreetMap contributors"
+MAX_FUEL_SUGGESTION_MILES = 5.0
 
 ASSUMPTIONS = [
     "Property-carrying driver using the 70-hour/8-day cycle with no adverse-condition extension.",
@@ -71,9 +72,7 @@ class TripPlannerService:
                 reverse = self.provider.reverse(current.coordinate)
                 timezone_name = reverse.timezone or "UTC"
                 if reverse.timezone is None:
-                    warnings.append(
-                        "Home-terminal timezone could not be detected; UTC was used."
-                    )
+                    warnings.append("Home-terminal timezone could not be detected; UTC was used.")
             except ProviderError:
                 timezone_name = "UTC"
                 warnings.append("Home-terminal timezone lookup failed; UTC was used.")
@@ -92,12 +91,25 @@ class TripPlannerService:
                     "This local time does not exist in the selected timezone.",
                     field="departure_at",
                 )
+            alternative = departure_at.replace(tzinfo=zone, fold=1)
+            if candidate.utcoffset() != alternative.utcoffset():
+                from trips.exceptions import ApiError
+
+                raise ApiError(
+                    "validation_error",
+                    (
+                        "This local time occurs twice because daylight saving time "
+                        "ends. Include an explicit UTC offset, such as -04:00 or "
+                        "-05:00."
+                    ),
+                    field="departure_at",
+                )
             departure_at = candidate
 
         route = self.provider.route([current, pickup, dropoff])
         events = schedule_route(route, departure_at, cycle_used)
         events = self._enrich_stops(events, warnings)
-        daily_logs = build_daily_logs(events, str(timezone_name), route.distance_miles, cycle_used)
+        daily_logs = build_daily_logs(events, str(timezone_name), route, cycle_used)
         metadata = dict(data.get("metadata") or {})
         for daily_log in daily_logs:
             daily_log["metadata"] = metadata
@@ -153,19 +165,36 @@ class TripPlannerService:
             },
         }
 
-    def _enrich_stops(
-        self, events: list[DutyEvent], warnings: list[str]
-    ) -> list[DutyEvent]:
+    def _enrich_stops(self, events: list[DutyEvent], warnings: list[str]) -> list[DutyEvent]:
         enriched: list[DutyEvent] = []
         lookup_warning_added = False
         for event in events:
             try:
                 if event.event_type == "fuel":
                     place = self.provider.nearby_fuel(event.start_coordinates)
-                    enriched.append(event.with_stop(place) if place else event)
-                    if place is None and not lookup_warning_added:
+                    if place is not None:
+                        distance_miles = haversine_miles(
+                            event.start_coordinates, (place.lon, place.lat)
+                        )
+                        if distance_miles <= MAX_FUEL_SUGGESTION_MILES:
+                            enriched.append(event.with_nearby_suggestion(place, distance_miles))
+                        else:
+                            enriched.append(event)
+                            if not lookup_warning_added:
+                                warnings.append(
+                                    f"{place.label} was {distance_miles:.1f} mi from "
+                                    "the scheduled route point and was ignored because "
+                                    "it is outside the 5-mile fuel-suggestion radius; "
+                                    "not added to route."
+                                )
+                                lookup_warning_added = True
+                        continue
+
+                    enriched.append(event)
+                    if not lookup_warning_added:
                         warnings.append(
-                            "A nearby fuel station could not be confirmed; the route-mile fuel point is shown."
+                            "A fuel station within 5 miles of the scheduled route point "
+                            "could not be confirmed; the route-mile fuel point is shown."
                         )
                         lookup_warning_added = True
                     continue

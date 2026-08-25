@@ -30,6 +30,24 @@ describe("Spotter application", () => {
     expect(screen.getByRole("button", { name: "Generate route & logs" })).toBeInTheDocument();
   });
 
+  it("leaves departure and timezone on automatic defaults and matches backend metadata limits", async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(screen.getByText("Trip & log settings"));
+    expect(screen.getByLabelText("Departure")).toHaveValue("");
+    expect(screen.getByLabelText("Departure")).toHaveAccessibleDescription("Leave blank to start at the current time.");
+    expect(screen.getByLabelText("Home-terminal timezone")).toHaveValue("");
+    expect(screen.getByLabelText("Home-terminal timezone")).toHaveAttribute("placeholder", "Auto-detect from current location");
+    expect(screen.getByLabelText("Home-terminal timezone")).toHaveAttribute("maxlength", "80");
+    expect(screen.getByLabelText("Driver")).toHaveAttribute("maxlength", "120");
+    expect(screen.getByLabelText("Carrier")).toHaveAttribute("maxlength", "160");
+    expect(screen.getByLabelText("Main office address")).toHaveAttribute("maxlength", "200");
+    expect(screen.getByLabelText("Home terminal address")).toHaveAttribute("maxlength", "200");
+    expect(screen.getByLabelText("Vehicle number")).toHaveAttribute("maxlength", "80");
+    expect(screen.getByLabelText("Shipping document")).toHaveAttribute("maxlength", "100");
+  });
+
   it("validates the cycle range before sending a request", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn();
@@ -66,8 +84,33 @@ describe("Spotter application", () => {
     const body = JSON.parse(String(init.body));
     expect(body.current_location).toMatchObject({ label: "Richmond, VA", lat: 37.5407, lon: -77.436 });
     expect(body.current_cycle_used_hours).toBe(30);
-    expect(body.home_terminal_timezone).toBe("America/New_York");
+    expect(body).not.toHaveProperty("departure_at");
+    expect(body).not.toHaveProperty("home_terminal_timezone");
     expect(JSON.parse(sessionStorage.getItem(planStorageKey) ?? "{}")).toMatchObject({ version: 1, plan: { id: "plan-1" } });
+  });
+
+  it("trims and submits optional office and terminal metadata", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => tripPlanFixture,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+
+    await user.click(screen.getByText("Trip & log settings"));
+    await user.type(screen.getByLabelText("Main office address"), "  123 Dispatch Way  ");
+    await user.type(screen.getByLabelText("Home terminal address"), "  880 Terminal Road  ");
+    await user.click(screen.getByRole("button", { name: "Generate route & logs" }));
+    await screen.findByText("1,350 mi");
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(init.body));
+    expect(body.metadata).toMatchObject({
+      main_office_address: "123 Dispatch Way",
+      home_terminal_address: "880 Terminal Road",
+    });
   });
 
   it("keeps an existing result visible when regeneration fails", async () => {

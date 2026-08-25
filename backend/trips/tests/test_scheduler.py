@@ -4,7 +4,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from trips.domain import Location, RouteLeg, RouteResult
+from trips.domain import Location, RouteLeg, RouteLocator, RouteResult
+from trips.providers.demo import DemoRoutingProvider
 from trips.scheduler import schedule_route
 
 DEPARTURE = datetime(2026, 8, 25, 6, tzinfo=UTC)
@@ -30,6 +31,73 @@ def make_route(first_hours: float, second_hours: float, *, speed: float = 60) ->
     )
 
 
+def test_route_locator_uses_each_leg_geometry_and_exact_waypoint_boundary() -> None:
+    current = Location("Current", 0, 0)
+    pickup = Location("Pickup", 0, 1)
+    dropoff = Location("Drop-off", 0, 11)
+    route = RouteResult(
+        # Provider geometry can be snapped slightly away from requested
+        # waypoint coordinates and have very different per-leg proportions.
+        coordinates=((0, 0), (0.5, 0), (1.1, 0), (6, 0), (11.2, 0)),
+        legs=(
+            RouteLeg(0, current, pickup, 100, 2),
+            RouteLeg(1, pickup, dropoff, 100, 2),
+        ),
+        instructions=(),
+        distance_miles=200,
+        duration_hours=4,
+        attribution="test",
+    )
+    locator = RouteLocator(route)
+
+    assert locator.coordinate_at(0) == current.coordinate
+    assert locator.coordinate_at(100) == pickup.coordinate
+    assert locator.coordinate_at(200) == dropoff.coordinate
+    assert locator.label_at(100) == "Pickup"
+    assert locator.coordinate_at(50) == pytest.approx((0.5, 0))
+    assert locator.coordinate_at(150) == pytest.approx((6, 0))
+
+
+def test_route_locator_prefers_explicit_leg_paths_for_loopback_geometry() -> None:
+    current = Location("Current", 0, 0)
+    pickup = Location("Pickup", 0, 1)
+    dropoff = Location("Drop-off", 0, 10)
+    route = RouteResult(
+        coordinates=((0, 0), (1.01, 0), (8, 0), (1.0001, 0), (10, 0)),
+        legs=(
+            RouteLeg(0, current, pickup, 100, 2),
+            RouteLeg(1, pickup, dropoff, 100, 2),
+        ),
+        instructions=(),
+        distance_miles=200,
+        duration_hours=4,
+        attribution="test",
+        leg_coordinates=(
+            ((0, 0), (1.01, 0)),
+            ((1.01, 0), (8, 0), (1.0001, 0), (10, 0)),
+        ),
+    )
+    locator = RouteLocator(route)
+
+    assert locator.coordinate_at(50) == pytest.approx((0.5, 0))
+    assert locator.coordinate_at(100) == pickup.coordinate
+    assert locator.coordinate_at(150) == pytest.approx((3.5001, 0), abs=0.0001)
+
+
+def test_demo_provider_preserves_each_leg_geometry() -> None:
+    current = Location("Current", 35, -90)
+    pickup = Location("Pickup", 36, -100)
+    dropoff = Location("Drop-off", 37, -110)
+
+    route = DemoRoutingProvider().route([current, pickup, dropoff])
+
+    assert len(route.leg_coordinates) == 2
+    assert route.leg_coordinates[0][0] == current.coordinate
+    assert route.leg_coordinates[0][-1] == pickup.coordinate
+    assert route.leg_coordinates[1][0] == pickup.coordinate
+    assert route.leg_coordinates[1][-1] == dropoff.coordinate
+
+
 def test_short_trip_only_has_required_waypoint_work() -> None:
     route = make_route(2, 3)
     events = schedule_route(route, DEPARTURE, 0)
@@ -41,7 +109,9 @@ def test_short_trip_only_has_required_waypoint_work() -> None:
         "dropoff",
     ]
     assert sum(event.miles_driven for event in events) == pytest.approx(route.distance_miles)
-    assert [event.duration_hours for event in events if event.event_type in {"pickup", "dropoff"}] == [1, 1]
+    assert [
+        event.duration_hours for event in events if event.event_type in {"pickup", "dropoff"}
+    ] == [1, 1]
 
 
 def test_pickup_at_eight_hours_satisfies_break() -> None:
@@ -76,6 +146,46 @@ def test_eleven_hour_limit_requires_ten_hour_rest() -> None:
     assert "11-hour" in rest.note
 
 
+def test_waypoint_snap_never_increases_drive_past_eleven_hour_limit() -> None:
+    # After eight hours on the first leg, only three daily driving hours remain.
+    # At this speed the old mileage-based tolerance snapped the 3.1-hour second
+    # leg to its waypoint and silently turned the day into 11.1 driving hours.
+    events = schedule_route(make_route(8, 3.1, speed=0.00005), DEPARTURE, 0)
+    driving = [event for event in events if event.status == "driving"]
+
+    assert [event.duration_hours for event in driving] == pytest.approx([8, 3, 0.1])
+    assert any(event.event_type == "rest" for event in events)
+    assert events[-1].event_type == "dropoff"
+
+
+def test_ultra_slow_long_route_preserves_daily_limit_at_final_waypoint() -> None:
+    events = schedule_route(make_route(0.1, 500, speed=0.00001), DEPARTURE, 0)
+    daily_driving = 0.0
+
+    for event in events:
+        if event.status == "driving":
+            daily_driving += event.duration_hours
+            assert daily_driving <= 11 + 1e-6
+        elif event.event_type in {"rest", "cycle_restart"}:
+            daily_driving = 0.0
+
+    assert events[-1].event_type == "dropoff"
+
+
+def test_tiny_positive_second_leg_always_reaches_dropoff() -> None:
+    route = make_route(0.1, 0.1, speed=0.000001)
+
+    events = schedule_route(route, DEPARTURE, 0)
+
+    assert [event.event_type for event in events] == [
+        "driving",
+        "pickup",
+        "driving",
+        "dropoff",
+    ]
+    assert sum(event.miles_driven for event in events) == pytest.approx(route.distance_miles)
+
+
 def test_fourteen_hour_window_can_bind_before_driving_limit() -> None:
     # High synthetic speed creates enough 950-mile on-duty fuel events for the
     # 14-hour window to bind before 11 driving hours. This isolates that clock.
@@ -96,7 +206,9 @@ def test_cycle_at_seventy_starts_with_one_restart() -> None:
 
 def test_cycle_exhaustion_mid_drive_restarts_before_more_driving() -> None:
     events = schedule_route(make_route(1, 1), DEPARTURE, 69.8)
-    restart_index = next(index for index, event in enumerate(events) if event.event_type == "cycle_restart")
+    restart_index = next(
+        index for index, event in enumerate(events) if event.event_type == "cycle_restart"
+    )
 
     assert events[restart_index - 1].status == "driving"
     assert events[restart_index - 1].duration_hours == pytest.approx(0.2)
@@ -105,13 +217,13 @@ def test_cycle_exhaustion_mid_drive_restarts_before_more_driving() -> None:
 
 def test_simultaneous_daily_and_cycle_limits_use_only_restart() -> None:
     events = schedule_route(make_route(1, 12), DEPARTURE, 58)
-    restart_index = next(index for index, event in enumerate(events) if event.event_type == "cycle_restart")
+    restart_index = next(
+        index for index, event in enumerate(events) if event.event_type == "cycle_restart"
+    )
 
     assert events[restart_index - 1].status == "driving"
     assert events[restart_index + 1].status == "driving"
-    assert not (
-        restart_index > 0 and events[restart_index - 1].event_type == "rest"
-    )
+    assert not (restart_index > 0 and events[restart_index - 1].event_type == "rest")
 
 
 def test_multiple_fuel_stops_keep_every_gap_below_one_thousand_miles() -> None:

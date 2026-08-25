@@ -21,6 +21,8 @@ export interface LocationValue {
 export interface TripMetadata {
   driver_name?: string;
   carrier_name?: string;
+  main_office_address?: string;
+  home_terminal_address?: string;
   vehicle_number?: string;
   shipping_document_number?: string;
 }
@@ -66,6 +68,7 @@ export interface TripSummary {
   stop_count: number;
   departure_at: string;
   arrival_at: string;
+  home_terminal_timezone: string;
 }
 
 export interface ScheduledStop {
@@ -117,6 +120,7 @@ export interface DailyLogSegment {
 
 export interface DailyLogRemark {
   time: string;
+  timezone_abbreviation?: string;
   status: DutyStatus;
   location: string;
   note: string;
@@ -132,6 +136,7 @@ export interface DailyStatusTotals {
 export interface DailyLog {
   date: string;
   timezone: string;
+  grid_note?: string | null;
   from_location: string;
   to_location: string;
   total_miles: number;

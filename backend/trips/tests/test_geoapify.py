@@ -8,9 +8,9 @@ from trips.providers.base import ProviderError
 from trips.providers.geoapify import GeoapifyRoutingProvider
 
 
-def test_autocomplete_is_normalized_and_us_filtered() -> None:
+def test_autocomplete_is_normalized_and_supports_global_results() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.params["filter"] == "countrycode:us"
+        assert "filter" not in request.url.params
         assert request.url.params["apiKey"] == "test-key"
         return httpx.Response(
             200,
@@ -104,10 +104,32 @@ def test_heavy_truck_route_and_instructions_are_normalized() -> None:
     assert route.distance_miles == pytest.approx(200)
     assert route.duration_hours == pytest.approx(4)
     assert route.coordinates == ((-90.0, 35.0), (-100.0, 36.0), (-110.0, 37.0))
+    assert route.leg_coordinates == (
+        ((-90.0, 35.0), (-100.0, 36.0)),
+        ((-100.0, 36.0), (-110.0, 37.0)),
+    )
     assert [instruction.instruction for instruction in route.instructions] == [
         "Head west",
         "Continue west",
     ]
+
+
+def test_leg_geometry_requires_one_multiline_path_per_leg() -> None:
+    mismatched = {
+        "type": "MultiLineString",
+        "coordinates": [
+            [[-90, 35], [-95, 35.5]],
+            [[-95, 35.5], [-100, 36]],
+            [[-100, 36], [-110, 37]],
+        ],
+    }
+    line_string = {
+        "type": "LineString",
+        "coordinates": [[-90, 35], [-100, 36], [-110, 37]],
+    }
+
+    assert GeoapifyRoutingProvider._leg_coordinates_from_geometry(mismatched, 2) == ()
+    assert GeoapifyRoutingProvider._leg_coordinates_from_geometry(line_string, 2) == ()
 
 
 def test_transient_failure_is_retried_once() -> None:
@@ -189,6 +211,7 @@ def test_empty_route_result_becomes_route_not_found() -> None:
 def test_fuel_and_reverse_lookup_contracts() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v2/places":
+            assert request.url.params["filter"] == "circle:-100,35,8000"
             return httpx.Response(
                 200,
                 json={

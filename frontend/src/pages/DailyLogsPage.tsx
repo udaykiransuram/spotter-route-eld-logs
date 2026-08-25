@@ -1,11 +1,12 @@
 import { ChevronLeft, ChevronRight, Expand, FileText, Minimize, Printer } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { AppHeader } from "../components/AppHeader";
 import { DailyLogSheet } from "../components/DailyLogSheet";
 import { DailySummary } from "../components/DailySummary";
 import { dutyStatusLabels, formatDayLabel } from "../lib/format";
 import { usePlan } from "../state/plan-store";
+import type { DailyLog, DailyLogRemark, TripMetadata } from "../types";
 
 const longDateFormatter = new Intl.DateTimeFormat("en-US", {
   weekday: "long",
@@ -13,6 +14,91 @@ const longDateFormatter = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
   year: "numeric",
 });
+
+const metadataFieldDefinitions = [
+  ["driver_name", "Driver"],
+  ["carrier_name", "Carrier"],
+  ["main_office_address", "Main office"],
+  ["home_terminal_address", "Home terminal"],
+  ["vehicle_number", "Vehicle number"],
+  ["shipping_document_number", "Shipping document"],
+] as const satisfies ReadonlyArray<readonly [keyof TripMetadata, string]>;
+
+function metadataEntries(metadata?: TripMetadata) {
+  return metadataFieldDefinitions.flatMap(([key, label]) => {
+    const value = metadata?.[key]?.trim();
+    return value ? [{ key, label, value }] : [];
+  });
+}
+
+function remarkDisplayTime(remark: DailyLogRemark) {
+  const abbreviation = remark.timezone_abbreviation?.trim();
+  return abbreviation ? `${remark.time} ${abbreviation}` : remark.time;
+}
+
+function LogMetadataDetails({ metadata }: { metadata?: TripMetadata }) {
+  const entries = metadataEntries(metadata);
+  if (entries.length === 0) return null;
+
+  return (
+    <section className="log-metadata-details" aria-labelledby="log-metadata-title">
+      <h2 id="log-metadata-title">Driver, carrier &amp; document details</h2>
+      <dl>
+        {entries.map(({ key, label, value }) => (
+          <div key={key}><dt>{label}</dt><dd>{value}</dd></div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+function PrintLogDetails({ log, dayNumber, metadata }: { log: DailyLog; dayNumber: number; metadata?: TripMetadata }) {
+  const entries = metadataEntries(metadata);
+  return (
+    <section className="print-log-details-page">
+      <header>
+        <div>
+          <span>Supplemental daily-log details · Generated planning log—not a certified ELD record</span>
+          <h1>{longDateFormatter.format(new Date(`${log.date}T12:00:00`))}</h1>
+        </div>
+        <strong>Day {dayNumber}</strong>
+      </header>
+      <dl className="print-log-details-route">
+        <div><dt>From</dt><dd>{log.from_location}</dd></div>
+        <div><dt>To</dt><dd>{log.to_location}</dd></div>
+        <div><dt>Timezone</dt><dd>{log.timezone.replaceAll("_", " ")}</dd></div>
+      </dl>
+      {log.grid_note ? (
+        <div className="print-log-grid-note">
+          <strong>Daylight-saving time-grid note</strong>
+          <p>{log.grid_note}</p>
+        </div>
+      ) : null}
+      {entries.length > 0 ? (
+        <section className="print-log-details-metadata" aria-label="Driver, carrier and document details">
+          <dl>
+            {entries.map(({ key, label, value }) => (
+              <div key={key}><dt>{label}</dt><dd>{value}</dd></div>
+            ))}
+          </dl>
+        </section>
+      ) : null}
+      <table>
+        <thead><tr><th>Time</th><th>Status</th><th>Event</th><th>Full location</th></tr></thead>
+        <tbody>
+          {log.remarks.map((remark, index) => (
+            <tr key={`${remark.time}-${index}`}>
+              <td>{remarkDisplayTime(remark)}</td>
+              <td>{dutyStatusLabels[remark.status]}</td>
+              <td>{remark.note}</td>
+              <td>{remark.location || "-"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
 
 export function DailyLogsPage() {
   const { plan } = usePlan();
@@ -33,6 +119,7 @@ export function DailyLogsPage() {
   const destination = plan.request?.dropoff_location.label ?? plan.daily_logs.at(-1)?.to_location;
   const routeLabel = [origin, pickup, destination].filter(Boolean).join(" → ");
   const activeDate = longDateFormatter.format(new Date(`${activeLog.date}T12:00:00`));
+  const panInstructionId = `log-pan-instruction-${activeIndex}`;
 
   const requestFullscreen = async () => {
     if (document.fullscreenElement) {
@@ -115,8 +202,20 @@ export function DailyLogsPage() {
               <span className="log-sheet-count">Sheet {activeIndex + 1} of {plan.daily_logs.length}</span>
             </div>
             <div className="log-paper-canvas">
-              <DailyLogSheet log={activeLog} metadata={plan.request?.metadata} />
+              <p className="log-pan-instruction" id={panInstructionId}>Swipe or scroll horizontally to read the full paper log.</p>
+              <div
+                className="log-paper-scroll"
+                role="region"
+                aria-label="Driver's daily log sheet"
+                aria-describedby={panInstructionId}
+                tabIndex={0}
+              >
+                <div className="log-paper-scroll__inner">
+                  <DailyLogSheet log={activeLog} metadata={plan.request?.metadata} />
+                </div>
+              </div>
             </div>
+            <LogMetadataDetails metadata={plan.request?.metadata} />
             <section className="remarks-list" aria-labelledby="remarks-title">
               <header className="remarks-list__header">
                 <div>
@@ -125,12 +224,18 @@ export function DailyLogsPage() {
                 </div>
                 <span>{activeLog.remarks.length} {activeLog.remarks.length === 1 ? "change" : "changes"}</span>
               </header>
+              {activeLog.grid_note ? (
+                <div className="log-grid-note" role="note" aria-label="Daylight-saving time-grid note">
+                  <strong>Daylight-saving time-grid note</strong>
+                  <p>{activeLog.grid_note}</p>
+                </div>
+              ) : null}
               {activeLog.remarks.length > 0 ? (
                 <ol>
                   {activeLog.remarks.map((remark, index) => (
                     <li className={`remark-item remark-item--${remark.status}`} key={`${remark.time}-${index}`}>
                       <span className="remark-item__marker" aria-hidden="true" />
-                      <time>{remark.time}</time>
+                      <time>{remarkDisplayTime(remark)}</time>
                       <div>
                         <strong>{dutyStatusLabels[remark.status]}</strong>
                         <p>{remark.note}</p>
@@ -145,10 +250,13 @@ export function DailyLogsPage() {
           <DailySummary log={activeLog} dayNumber={activeIndex + 1} />
         </div>
         <div className="print-all-logs" aria-hidden="true">
-          {plan.daily_logs.map((log) => (
-            <div className="print-log-page" key={log.date}>
-              <DailyLogSheet log={log} metadata={plan.request?.metadata} />
-            </div>
+          {plan.daily_logs.map((log, index) => (
+            <Fragment key={log.date}>
+              <div className="print-log-page">
+                <DailyLogSheet log={log} metadata={plan.request?.metadata} />
+              </div>
+              <PrintLogDetails log={log} dayNumber={index + 1} metadata={plan.request?.metadata} />
+            </Fragment>
           ))}
         </div>
       </main>

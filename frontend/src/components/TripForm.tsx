@@ -1,6 +1,6 @@
 import { ChevronDown, Clock3, LoaderCircle } from "lucide-react";
 import { type FormEvent, useState } from "react";
-import { localInputToIso, toLocalDateTimeValue } from "../lib/format";
+import { localInputToIso } from "../lib/format";
 import type { LocationValue, TripMetadata, TripPlanRequest } from "../types";
 import { LocationAutocomplete } from "./LocationAutocomplete";
 
@@ -52,8 +52,8 @@ export function TripForm({ onGenerate, loading, apiError }: TripFormProps) {
   const [pickup, setPickup] = useState<LocationValue | null>(defaultLocations.pickup);
   const [dropoff, setDropoff] = useState<LocationValue | null>(defaultLocations.dropoff);
   const [cycleUsed, setCycleUsed] = useState("30");
-  const [departureAt, setDepartureAt] = useState(() => toLocalDateTimeValue(new Date(), "America/New_York"));
-  const [timezone, setTimezone] = useState("America/New_York");
+  const [departureAt, setDepartureAt] = useState("");
+  const [timezone, setTimezone] = useState("");
   const [metadata, setMetadata] = useState<TripMetadata>({});
   const [errors, setErrors] = useState<FieldErrors>({});
 
@@ -77,7 +77,9 @@ export function TripForm({ onGenerate, loading, apiError }: TripFormProps) {
     if (Object.keys(nextErrors).length > 0 || !current || !pickup || !dropoff) return;
 
     const cleanMetadata = Object.fromEntries(
-      Object.entries(metadata).filter(([, value]) => value?.trim()),
+      Object.entries(metadata)
+        .map(([key, value]) => [key, value?.trim()] as const)
+        .filter(([, value]) => value),
     ) as TripMetadata;
 
     await onGenerate({
@@ -162,17 +164,36 @@ export function TripForm({ onGenerate, loading, apiError }: TripFormProps) {
           <div className="settings-panel__content">
             <div className="field">
               <label htmlFor="departure-at">Departure</label>
-              <input id="departure-at" type="datetime-local" value={departureAt} onChange={(event) => setDepartureAt(event.target.value)} />
+              <input
+                id="departure-at"
+                name="departure_at"
+                type="datetime-local"
+                value={departureAt}
+                aria-describedby="departure-at-help"
+                onChange={(event) => setDepartureAt(event.target.value)}
+              />
+              <p className="field-help" id="departure-at-help">Leave blank to start at the current time.</p>
             </div>
             <div className="field">
               <label htmlFor="home-timezone">Home-terminal timezone</label>
-              <input id="home-timezone" value={timezone} onChange={(event) => setTimezone(event.target.value)} />
+              <input
+                id="home-timezone"
+                name="home_terminal_timezone"
+                value={timezone}
+                maxLength={80}
+                placeholder="Auto-detect from current location"
+                aria-describedby="home-timezone-help"
+                onChange={(event) => setTimezone(event.target.value)}
+              />
+              <p className="field-help" id="home-timezone-help">Leave blank to use the current location's timezone.</p>
             </div>
             <div className="settings-grid">
-              <div className="field"><label htmlFor="driver-name">Driver</label><input id="driver-name" value={metadata.driver_name ?? ""} onChange={(event) => updateMetadata("driver_name", event.target.value)} /></div>
-              <div className="field"><label htmlFor="carrier-name">Carrier</label><input id="carrier-name" value={metadata.carrier_name ?? ""} onChange={(event) => updateMetadata("carrier_name", event.target.value)} /></div>
-              <div className="field"><label htmlFor="vehicle-number">Vehicle number</label><input id="vehicle-number" value={metadata.vehicle_number ?? ""} onChange={(event) => updateMetadata("vehicle_number", event.target.value)} /></div>
-              <div className="field"><label htmlFor="shipping-document">Shipping document</label><input id="shipping-document" value={metadata.shipping_document_number ?? ""} onChange={(event) => updateMetadata("shipping_document_number", event.target.value)} /></div>
+              <div className="field"><label htmlFor="driver-name">Driver</label><input id="driver-name" maxLength={120} value={metadata.driver_name ?? ""} onChange={(event) => updateMetadata("driver_name", event.target.value)} /></div>
+              <div className="field"><label htmlFor="carrier-name">Carrier</label><input id="carrier-name" maxLength={160} value={metadata.carrier_name ?? ""} onChange={(event) => updateMetadata("carrier_name", event.target.value)} /></div>
+              <div className="field settings-grid__wide"><label htmlFor="main-office-address">Main office address</label><input id="main-office-address" maxLength={200} value={metadata.main_office_address ?? ""} onChange={(event) => updateMetadata("main_office_address", event.target.value)} /></div>
+              <div className="field settings-grid__wide"><label htmlFor="home-terminal-address">Home terminal address</label><input id="home-terminal-address" maxLength={200} value={metadata.home_terminal_address ?? ""} onChange={(event) => updateMetadata("home_terminal_address", event.target.value)} /></div>
+              <div className="field"><label htmlFor="vehicle-number">Vehicle number</label><input id="vehicle-number" maxLength={80} value={metadata.vehicle_number ?? ""} onChange={(event) => updateMetadata("vehicle_number", event.target.value)} /></div>
+              <div className="field"><label htmlFor="shipping-document">Shipping document</label><input id="shipping-document" maxLength={100} value={metadata.shipping_document_number ?? ""} onChange={(event) => updateMetadata("shipping_document_number", event.target.value)} /></div>
             </div>
           </div>
         </details>

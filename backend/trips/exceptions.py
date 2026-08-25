@@ -61,7 +61,7 @@ def api_exception_handler(exc: Exception, context: dict[str, Any]) -> Response |
             code = exc.__class__.__name__.replace("Error", "").lower() or "request_failed"
         field = None
         message = _stringify_detail(response.data)
-        retryable = response.status_code >= 500
+        retryable = response.status_code >= 500 or response.status_code == 429
 
     response.data = {
         "error": {

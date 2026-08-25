@@ -23,6 +23,8 @@ class HealthView(APIView):
 
 
 class LocationSuggestView(APIView):
+    throttle_scope = "location_suggest"
+
     def get(self, request: object) -> Response:
         serializer = LocationQuerySerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
@@ -39,6 +41,8 @@ class LocationSuggestView(APIView):
 
 
 class TripPlanView(APIView):
+    throttle_scope = "trip_plan"
+
     def post(self, request: object) -> Response:
         serializer = TripPlanRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

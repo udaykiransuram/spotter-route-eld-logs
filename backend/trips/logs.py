@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from trips.domain import DutyEvent, DutyStatus
+from trips.domain import DutyEvent, DutyStatus, RouteLocator, RouteResult
 
 STATUSES: tuple[DutyStatus, ...] = (
     "off_duty",
@@ -18,13 +18,14 @@ STATUSES: tuple[DutyStatus, ...] = (
 def build_daily_logs(
     events: list[DutyEvent],
     timezone_name: str,
-    route_distance_miles: float,
+    route: RouteResult,
     initial_cycle_used_hours: float,
 ) -> list[dict[str, object]]:
     if not events:
         return []
 
     zone = ZoneInfo(timezone_name)
+    locator = RouteLocator(route)
     first_date = events[0].start_at.astimezone(zone).date()
     # An event ending exactly at midnight does not add an empty log sheet.
     final_instant = events[-1].end_at - timedelta(microseconds=1)
@@ -42,14 +43,15 @@ def build_daily_logs(
             touching,
             current_date,
             zone,
+            day_start=day_start,
+            day_end=day_end,
+            locator=locator,
             trip_completed_at=events[-1].end_at,
             final_location=events[-1].end_location,
             final_status=events[-1].status,
         )
         status_totals = _status_totals(segments)
-        cycle_start = _cycle_at(
-            events, day_start.astimezone(UTC), initial_cycle_used_hours
-        )
+        cycle_start = _cycle_at(events, day_start.astimezone(UTC), initial_cycle_used_hours)
         cycle_end = _cycle_at(events, day_end.astimezone(UTC), initial_cycle_used_hours)
         restart_completed = any(
             event.event_type == "cycle_restart"
@@ -61,15 +63,30 @@ def build_daily_logs(
             {
                 "date": current_date.isoformat(),
                 "timezone": timezone_name,
-                "from_location": touching[0].start_location if touching else "Off duty",
-                "to_location": touching[-1].end_location if touching else "Off duty",
+                "from_location": (
+                    _location_at(
+                        touching[0],
+                        max(touching[0].start_at, day_start.astimezone(UTC)),
+                        locator,
+                    )
+                    if touching
+                    else "Off duty"
+                ),
+                "to_location": (
+                    _location_at(
+                        touching[-1],
+                        min(touching[-1].end_at, day_end.astimezone(UTC)),
+                        locator,
+                    )
+                    if touching
+                    else "Off duty"
+                ),
                 "total_miles": round(raw_miles, 2),
                 "status_totals": status_totals,
+                "grid_note": _grid_note(day_start, day_end),
                 "cycle_used_hours": round(cycle_end, 2),
                 "recap": {
-                    "on_duty_today": round(
-                        status_totals["driving"] + status_totals["on_duty"], 2
-                    ),
+                    "on_duty_today": round(_elapsed_on_duty_hours(touching, day_start, day_end), 2),
                     "cycle_used_at_start": round(cycle_start, 2),
                     "cycle_used_at_end": round(cycle_end, 2),
                     "remaining_cycle_hours": round(max(0.0, 70.0 - cycle_end), 2),
@@ -83,19 +100,31 @@ def build_daily_logs(
 
     # Independent per-day rounding can lose a few hundredths. Reconcile the
     # final sheet so the public invariant is exact at API precision.
-    target_miles = round(route_distance_miles, 2)
-    rounded_sum = round(sum(float(log["total_miles"]) for log in logs), 2)
-    adjustment_index = next(
-        (
-            index
-            for index in range(len(logs) - 1, -1, -1)
-            if float(logs[index]["total_miles"]) > 0
-        ),
-        len(logs) - 1,
-    )
-    logs[adjustment_index]["total_miles"] = round(
-        float(logs[adjustment_index]["total_miles"]) + target_miles - rounded_sum, 2
-    )
+    target_miles = round(route.distance_miles, 2)
+    target_cents = int(round(target_miles * 100))
+    day_cents = [int(round(float(log["total_miles"]) * 100)) for log in logs]
+    adjustment_cents = target_cents - sum(day_cents)
+
+    if adjustment_cents >= 0:
+        adjustment_index = next(
+            (index for index in range(len(logs) - 1, -1, -1) if day_cents[index] > 0),
+            len(logs) - 1,
+        )
+        day_cents[adjustment_index] += adjustment_cents
+    else:
+        # Several very small driving days can each round up by a cent. Remove
+        # that excess backward across positive days instead of making the last
+        # positive day negative.
+        remaining_cents = -adjustment_cents
+        for index in range(len(day_cents) - 1, -1, -1):
+            removed_cents = min(day_cents[index], remaining_cents)
+            day_cents[index] -= removed_cents
+            remaining_cents -= removed_cents
+            if remaining_cents == 0:
+                break
+
+    for log, cents in zip(logs, day_cents):
+        log["total_miles"] = cents / 100
     return logs
 
 
@@ -121,10 +150,14 @@ def _segments_for_day(
         overlap_end = min(event.end_at.astimezone(UTC), day_end_utc)
         if overlap_end <= overlap_start:
             continue
-        local_start = overlap_start.astimezone(day_start.tzinfo)
-        local_end = overlap_end.astimezone(day_start.tzinfo)
-        start_minute = 0.0 if overlap_start == day_start_utc else _wall_minute(local_start, day)
-        end_minute = 1440.0 if overlap_end == day_end_utc else _wall_minute(local_end, day)
+        start_minute = (
+            0.0
+            if overlap_start == day_start_utc
+            else _grid_minute(overlap_start, day_start, day_end)
+        )
+        end_minute = (
+            1440.0 if overlap_end == day_end_utc else _grid_minute(overlap_end, day_start, day_end)
+        )
         start_minute = min(1440.0, max(0.0, start_minute))
         end_minute = min(1440.0, max(start_minute, end_minute))
 
@@ -157,10 +190,28 @@ def _segments_for_day(
     ]
 
 
-def _wall_minute(value: datetime, day: date) -> float:
-    naive = value.replace(tzinfo=None)
-    midnight = datetime.combine(day, time.min)
-    return (naive - midnight).total_seconds() / 60
+def _grid_minute(value: datetime, day_start: datetime, day_end: datetime) -> float:
+    """Project real elapsed time monotonically onto a 24-hour paper grid."""
+
+    start_utc = day_start.astimezone(UTC)
+    end_utc = day_end.astimezone(UTC)
+    elapsed_seconds = (value.astimezone(UTC) - start_utc).total_seconds()
+    day_seconds = (end_utc - start_utc).total_seconds()
+    if day_seconds <= 0:
+        return 0.0
+    return elapsed_seconds / day_seconds * 1440.0
+
+
+def _grid_note(day_start: datetime, day_end: datetime) -> str | None:
+    elapsed_hours = (day_end.astimezone(UTC) - day_start.astimezone(UTC)).total_seconds() / 3600
+    if abs(elapsed_hours - 24.0) < 1e-9:
+        return None
+    transition = "spring-forward" if elapsed_hours < 24 else "fall-back"
+    return (
+        f"Daylight-saving {transition}: the {elapsed_hours:g}-hour local day is "
+        "projected proportionally onto this 24-hour paper grid. Remark clock "
+        "times and timezone abbreviations preserve the actual local time."
+    )
 
 
 def _status_totals(segments: list[dict[str, object]]) -> dict[str, float]:
@@ -181,9 +232,44 @@ def _miles_for_day(event: DutyEvent, day_start: datetime, day_end: datetime) -> 
     end = min(event.end_at.astimezone(UTC), day_end.astimezone(UTC))
     if end <= start:
         return 0.0
-    total_seconds = (event.end_at - event.start_at).total_seconds()
+    total_seconds = (event.end_at.astimezone(UTC) - event.start_at.astimezone(UTC)).total_seconds()
     overlap_seconds = (end - start).total_seconds()
     return event.miles_driven * overlap_seconds / total_seconds
+
+
+def _elapsed_on_duty_hours(
+    events: list[DutyEvent], day_start: datetime, day_end: datetime
+) -> float:
+    start_utc = day_start.astimezone(UTC)
+    end_utc = day_end.astimezone(UTC)
+    seconds = 0.0
+    for event in events:
+        if event.status not in {"driving", "on_duty"}:
+            continue
+        overlap_start = max(event.start_at.astimezone(UTC), start_utc)
+        overlap_end = min(event.end_at.astimezone(UTC), end_utc)
+        if overlap_end > overlap_start:
+            seconds += (overlap_end - overlap_start).total_seconds()
+    return seconds / 3600
+
+
+def _location_at(event: DutyEvent, instant: datetime, locator: RouteLocator) -> str:
+    instant_utc = instant.astimezone(UTC)
+    start_utc = event.start_at.astimezone(UTC)
+    end_utc = event.end_at.astimezone(UTC)
+    if instant_utc <= start_utc:
+        return event.start_location
+    if instant_utc >= end_utc:
+        return event.end_location
+    if event.status != "driving" or event.end_mile <= event.start_mile:
+        return event.start_location
+
+    event_seconds = (end_utc - start_utc).total_seconds()
+    elapsed_seconds = (instant_utc - start_utc).total_seconds()
+    route_mile = (
+        event.start_mile + (event.end_mile - event.start_mile) * elapsed_seconds / event_seconds
+    )
+    return locator.label_at(route_mile)
 
 
 def _remarks_for_day(
@@ -191,6 +277,9 @@ def _remarks_for_day(
     day: date,
     zone: ZoneInfo,
     *,
+    day_start: datetime,
+    day_end: datetime,
+    locator: RouteLocator,
     trip_completed_at: datetime,
     final_location: str,
     final_status: DutyStatus,
@@ -199,47 +288,53 @@ def _remarks_for_day(
     for event in events:
         local_start = event.start_at.astimezone(zone)
         if local_start.date() == day:
-            minute = local_start.hour * 60 + local_start.minute + local_start.second / 60
+            remark_at = event.start_at
             note = event.note
+            location = event.start_location
         else:
-            minute = 0.0
+            remark_at = day_start
             note = f"Continued: {event.note}"
+            location = _location_at(event, day_start, locator)
+        minute = _grid_minute(remark_at, day_start, day_end)
+        local_remark_at = remark_at.astimezone(zone)
         remarks.append(
             {
                 "event_id": event.id,
-                "time": f"{int(minute // 60):02d}:{int(minute % 60):02d}",
+                "time": f"{local_remark_at.hour:02d}:{local_remark_at.minute:02d}",
                 "minute": round(minute, 3),
                 "status": event.status,
-                "location": event.start_location,
+                "location": location,
                 "note": note,
+                "timezone_abbreviation": local_remark_at.tzname() or "",
             }
         )
 
     completion = trip_completed_at.astimezone(zone)
-    completion_minute = (
-        completion.hour * 60 + completion.minute + completion.second / 60
-    )
-    if (
-        completion.date() == day
-        and completion_minute > 0
-        and final_status != "off_duty"
-    ):
+    completion_minute = _grid_minute(trip_completed_at, day_start, day_end)
+    completes_at_day_end = trip_completed_at.astimezone(UTC) == day_end.astimezone(UTC)
+    completion_belongs_on_sheet = (
+        completion.date() == day and completion_minute > 0
+    ) or completes_at_day_end
+    if completion_belongs_on_sheet and final_status != "off_duty":
         remarks.append(
             {
                 "event_id": "trip-complete",
-                "time": f"{completion.hour:02d}:{completion.minute:02d}",
+                "time": (
+                    "24:00"
+                    if completes_at_day_end
+                    else f"{completion.hour:02d}:{completion.minute:02d}"
+                ),
                 "minute": round(completion_minute, 3),
                 "status": "off_duty",
                 "location": final_location,
                 "note": "Trip complete; Off Duty.",
+                "timezone_abbreviation": completion.tzname() or "",
             }
         )
     return remarks
 
 
-def _cycle_at(
-    events: list[DutyEvent], cutoff: datetime, initial_cycle_used_hours: float
-) -> float:
+def _cycle_at(events: list[DutyEvent], cutoff: datetime, initial_cycle_used_hours: float) -> float:
     cycle_used = float(initial_cycle_used_hours)
     cutoff_utc = cutoff.astimezone(UTC)
     for event in events:

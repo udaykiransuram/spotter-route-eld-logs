@@ -65,9 +65,6 @@ def schedule_route(
     leg_end_mile = route.legs[0].distance_miles
 
     for _ in range(10_000):
-        if state.route_mile >= route.distance_miles - EPSILON:
-            break
-
         # A route waypoint wins a tie with a fuel threshold. After servicing
         # pickup, a fuel event at the same mile is still inserted if required.
         if state.miles_since_fuel >= FUEL_TARGET_MILES - EPSILON:
@@ -154,15 +151,17 @@ def schedule_route(
         }
         drive_hours = min(limits.values())
         if drive_hours <= EPSILON:
-            raise SchedulingError(f"Scheduler made no progress at route mile {state.route_mile:.3f}")
+            raise SchedulingError(
+                f"Scheduler made no progress at route mile {state.route_mile:.3f}"
+            )
 
         distance = min(distance_to_waypoint, speed_mph * drive_hours)
         start_mile = state.route_mile
         end_mile = start_mile + distance
-        if abs(end_mile - leg_end_mile) <= 1e-5:
+        reached_waypoint = limits["waypoint"] <= drive_hours + EPSILON
+        if reached_waypoint:
             end_mile = leg_end_mile
             distance = end_mile - start_mile
-            drive_hours = distance / speed_mph
 
         start_at = state.now
         end_at = start_at + timedelta(hours=drive_hours)
@@ -191,7 +190,7 @@ def schedule_route(
         state.cycle_used += drive_hours
         state.miles_since_fuel += distance
 
-        if abs(state.route_mile - leg_end_mile) <= 1e-5:
+        if reached_waypoint:
             is_final = leg_index == len(route.legs) - 1
             event_type: EventType = "dropoff" if is_final else "pickup"
             waypoint = leg.end
@@ -203,9 +202,7 @@ def schedule_route(
                 event_type=event_type,
                 duration_hours=PICKUP_DROPOFF_HOURS,
                 note=(
-                    "One hour on duty for drop-off."
-                    if is_final
-                    else "One hour on duty for pickup."
+                    "One hour on duty for drop-off." if is_final else "One hour on duty for pickup."
                 ),
                 location=waypoint.label,
                 coordinate=waypoint.coordinate,

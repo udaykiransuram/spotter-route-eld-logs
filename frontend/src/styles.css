@@ -286,6 +286,13 @@ button:disabled {
   line-height: 1.35;
 }
 
+.field-help {
+  margin: -1px 0 0;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
 .combobox-wrap,
 .input-with-icon {
   position: relative;
@@ -416,6 +423,7 @@ button:disabled {
   gap: 12px 9px;
 }
 
+.settings-grid__wide { grid-column: 1 / -1; }
 .settings-grid .field input { height: 38px; }
 
 .planner-submit {
@@ -878,7 +886,7 @@ button:disabled {
 
 .log-stage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: 22px;
   background: transparent;
@@ -954,9 +962,22 @@ button:disabled {
 }
 
 .log-paper-canvas {
+  min-width: 0;
   padding: 16px;
   background: #eef3f7;
 }
+
+.log-pan-instruction { display: none; }
+
+.log-paper-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+}
+
+.log-paper-scroll__inner { min-width: 0; }
 
 .log-sheet {
   width: 100%;
@@ -978,6 +999,50 @@ button:disabled {
 
 .log-overlay-text { pointer-events: none; }
 
+.log-metadata-details {
+  padding: 18px 20px 20px;
+  border-top: 1px solid var(--border);
+  background: #ffffff;
+}
+
+.log-metadata-details h2 {
+  margin: 0 0 13px;
+  font-size: 14px;
+}
+
+.log-metadata-details dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+  margin: 0;
+  gap: 10px;
+}
+
+.log-metadata-details dl > div {
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid #e0e7ed;
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+
+.log-metadata-details dt {
+  color: var(--muted);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.log-metadata-details dd {
+  margin: 4px 0 0;
+  color: #17314d;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .remarks-list {
   padding: 19px 20px 21px;
   border-top: 1px solid var(--border);
@@ -988,6 +1053,18 @@ button:disabled {
 .remarks-list h2 { margin: 0; font-size: 14px; }
 .remarks-list__header p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
 .remarks-list__header > span { color: #496176; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.log-grid-note {
+  display: grid;
+  margin-top: 14px;
+  padding: 11px 12px;
+  gap: 3px;
+  border: 1px solid #bdd8f3;
+  border-radius: 6px;
+  color: #214665;
+  background: var(--surface-blue);
+}
+.log-grid-note strong { font-size: 11px; }
+.log-grid-note p { margin: 0; font-size: 10.5px; line-height: 1.45; }
 .remarks-list ol { display: grid; margin: 17px 0 0; padding: 0; gap: 0; list-style: none; }
 .remarks-list li { position: relative; display: grid; grid-template-columns: 12px 82px minmax(0, 1fr); min-height: 58px; gap: 11px; color: #344b61; font-size: 11.5px; line-height: 1.35; }
 .remarks-list li:not(:last-child)::after { content: ""; position: absolute; top: 16px; bottom: -1px; left: 5px; width: 1px; background: #dbe4ec; }
@@ -1003,9 +1080,8 @@ button:disabled {
 .remarks-list > p { margin: 0; color: var(--muted); font-size: 12px; }
 
 .daily-summary {
-  position: sticky;
-  top: 16px;
-  min-height: 565px;
+  position: static;
+  min-height: 0;
   padding: 20px;
   border: 1px solid var(--border-dark);
   border-radius: 10px;
@@ -1061,6 +1137,10 @@ button:disabled {
   .route-workspace--results .itinerary-panel {
     height: 100%;
     min-height: 0;
+  }
+
+  .route-workspace--results .route-results {
+    overflow-y: auto;
   }
 
   .route-workspace--results .route-workspace__left {
@@ -1146,7 +1226,22 @@ button:disabled {
   .log-document-bar__title span:not(.log-document-icon) { max-width: 210px; }
   .log-document-icon { width: 34px; height: 34px; }
   .log-paper-canvas { padding: 8px; }
-  .log-sheet svg { width: 100%; }
+  .log-pan-instruction {
+    display: block;
+    margin: 0 0 7px;
+    color: #52677c;
+    font-size: 10.5px;
+    line-height: 1.4;
+  }
+  .log-paper-scroll {
+    border: 1px solid #d4dde5;
+    border-radius: 4px;
+    background: #ffffff;
+  }
+  .log-paper-scroll__inner { width: 680px; }
+  .log-paper-scroll .log-sheet { width: 680px; border: 0; box-shadow: none; }
+  .log-metadata-details { padding: 17px 14px 19px; }
+  .log-metadata-details dl { grid-template-columns: 1fr; }
   .remarks-list { padding: 17px 14px 19px; }
   .remarks-list li { grid-template-columns: 12px 68px minmax(0, 1fr); gap: 9px; }
   .summary-highlights { grid-template-columns: 1fr; }
@@ -1172,7 +1267,49 @@ button:disabled {
   .log-document-bar { display: none !important; }
   .logs-page { width: 100%; margin: 0; padding: 0; }
   .print-all-logs { display: block; }
-  .print-log-page { display: flex; width: 100%; height: calc(100vh - 2mm); align-items: center; justify-content: center; break-after: page; page-break-after: always; }
-  .print-log-page:last-child { break-after: auto; page-break-after: auto; }
-  .print-log-page .log-sheet { width: 100%; max-width: none; border: 0; box-shadow: none; }
+  .print-log-page { display: flex; width: 100%; height: calc(100vh - 2mm); overflow: hidden; align-items: center; justify-content: center; break-after: page; page-break-after: always; }
+  .print-log-page .log-sheet { width: auto; height: 100%; max-width: 100%; max-height: 100%; aspect-ratio: 513 / 518; border: 0; box-shadow: none; }
+  .print-log-page .log-sheet svg { width: 100%; height: 100%; }
+  .print-log-details-page {
+    display: block;
+    padding: 8mm 10mm;
+    color: #10243a;
+    background: #ffffff;
+    break-after: page;
+    page-break-after: always;
+  }
+  .print-log-details-page:last-child { break-after: auto; page-break-after: auto; }
+  .print-log-details-page header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; border-bottom: 2px solid #123a4a; padding-bottom: 10px; }
+  .print-log-details-page header span { color: #426174; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+  .print-log-details-page h1 { margin: 4px 0 0; font-size: 22px; }
+  .print-log-details-page header > strong { font-size: 13px; }
+  .print-log-details-route { display: grid; grid-template-columns: 1fr 1fr 0.65fr; margin: 16px 0 18px; gap: 12px; }
+  .print-log-details-route > div { min-width: 0; padding: 10px 12px; border: 1px solid #cad5de; border-radius: 4px; }
+  .print-log-details-route dt { color: #526a7c; font-size: 9px; font-weight: 700; text-transform: uppercase; }
+  .print-log-details-route dd { margin: 4px 0 0; font-size: 11px; font-weight: 600; line-height: 1.35; }
+  .print-log-grid-note { margin: -4px 0 18px; padding: 9px 11px; border: 1px solid #bdd8f3; border-radius: 4px; color: #214665; background: #edf6ff; break-inside: avoid; page-break-inside: avoid; }
+  .print-log-grid-note strong { font-size: 9px; }
+  .print-log-grid-note p { margin: 3px 0 0; font-size: 8.5px; line-height: 1.35; }
+  .print-log-details-metadata { margin: -4px 0 18px; }
+  .print-log-details-metadata dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; gap: 8px; }
+  .print-log-details-metadata dl > div { min-width: 0; padding: 8px 9px; border: 1px solid #d8e1e8; border-radius: 4px; break-inside: avoid; page-break-inside: avoid; }
+  .print-log-details-metadata dt { color: #526a7c; font-size: 8px; font-weight: 700; text-transform: uppercase; }
+  .print-log-details-metadata dd { margin: 3px 0 0; font-size: 9px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; word-break: break-word; }
+  .print-log-details-page table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .print-log-details-page th {
+    padding: 6px 8px;
+    border-bottom: 1.5px solid #879cab;
+    color: #263f50;
+    background: #eef3f6;
+    font-size: 9px;
+    text-align: left;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .print-log-details-page th:nth-child(1) { width: 8%; }
+  .print-log-details-page th:nth-child(2) { width: 13%; }
+  .print-log-details-page th:nth-child(3) { width: 34%; }
+  .print-log-details-page th:nth-child(4) { width: 45%; }
+  .print-log-details-page td { padding: 5px 8px; border-bottom: 1px solid #dce4ea; font-size: 9.5px; line-height: 1.35; vertical-align: top; overflow-wrap: anywhere; }
+  .print-log-details-page tr { break-inside: avoid; page-break-inside: avoid; }
 }
