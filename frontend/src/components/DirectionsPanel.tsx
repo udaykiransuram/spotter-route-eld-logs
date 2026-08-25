@@ -1,19 +1,40 @@
+import Accordion from "@mui/material/Accordion";
+import AccordionDetails from "@mui/material/AccordionDetails";
+import AccordionSummary from "@mui/material/AccordionSummary";
 import { ChevronDown, CornerDownRight } from "lucide-react";
+import { memo, useMemo } from "react";
 import { formatDuration, formatMiles } from "../lib/format";
 import type { RouteInstruction } from "../types";
 
-export function DirectionsPanel({ instructions }: { instructions: RouteInstruction[] }) {
+export const DirectionsPanel = memo(function DirectionsPanel({ instructions }: { instructions: RouteInstruction[] }) {
+  const grouped = useMemo(() => {
+    const groups = new Map<number, RouteInstruction[]>();
+    for (const instruction of instructions) {
+      const leg = groups.get(instruction.leg_index) ?? [];
+      leg.push(instruction);
+      groups.set(instruction.leg_index, leg);
+    }
+    return groups;
+  }, [instructions]);
+
   if (instructions.length === 0) return null;
-  const grouped = new Map<number, RouteInstruction[]>();
-  for (const instruction of instructions) {
-    const leg = grouped.get(instruction.leg_index) ?? [];
-    leg.push(instruction);
-    grouped.set(instruction.leg_index, leg);
-  }
+
   return (
-    <details className="directions-panel">
-      <summary><span>Turn-by-turn route instructions ({instructions.length})</span><ChevronDown size={17} aria-hidden="true" /></summary>
-      <div className="directions-panel__body">
+    <Accordion
+      className="directions-panel"
+      slotProps={{ transition: { unmountOnExit: true } }}
+      sx={{ "&.Mui-expanded": { margin: 0 } }}
+    >
+      <AccordionSummary
+        aria-controls="route-instructions-content"
+        className="directions-panel__summary"
+        expandIcon={<ChevronDown size={17} aria-hidden="true" />}
+        id="route-instructions-header"
+        sx={{ minHeight: 45, padding: "0 14px", fontSize: 12, fontWeight: 700 }}
+      >
+        <span>Turn-by-turn route instructions ({instructions.length})</span>
+      </AccordionSummary>
+      <AccordionDetails className="directions-panel__body" id="route-instructions-content">
         {Array.from(grouped, ([legIndex, legInstructions]) => (
           <section key={legIndex} aria-labelledby={`route-leg-${legIndex}`}>
             <h3 id={`route-leg-${legIndex}`}>{legIndex === 0 ? "Current location → Pickup" : legIndex === 1 ? "Pickup → Drop-off" : `Route leg ${legIndex + 1}`}</h3>
@@ -27,7 +48,7 @@ export function DirectionsPanel({ instructions }: { instructions: RouteInstructi
             </ol>
           </section>
         ))}
-      </div>
-    </details>
+      </AccordionDetails>
+    </Accordion>
   );
-}
+});

@@ -37,7 +37,7 @@ def build_daily_logs(
         day_start = datetime.combine(current_date, time.min, tzinfo=zone)
         day_end = datetime.combine(current_date + timedelta(days=1), time.min, tzinfo=zone)
         touching = [event for event in events if _overlaps(event, day_start, day_end)]
-        segments = _segments_for_day(touching, current_date, day_start, day_end)
+        segments = _segments_for_day(touching, day_start, day_end)
         raw_miles = sum(_miles_for_day(event, day_start, day_end) for event in touching)
         remarks = _remarks_for_day(
             touching,
@@ -136,7 +136,6 @@ def _overlaps(event: DutyEvent, day_start: datetime, day_end: datetime) -> bool:
 
 def _segments_for_day(
     events: list[DutyEvent],
-    day: date,
     day_start: datetime,
     day_end: datetime,
 ) -> list[dict[str, object]]:

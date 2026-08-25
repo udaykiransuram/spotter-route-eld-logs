@@ -1,16 +1,30 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from math import isfinite
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from rest_framework import serializers
 
 
+class FiniteFloatField(serializers.FloatField):
+    default_error_messages = {
+        **serializers.FloatField.default_error_messages,
+        "not_finite": "Enter a finite number.",
+    }
+
+    def to_internal_value(self, data: object) -> float:
+        value = super().to_internal_value(data)
+        if not isfinite(value):
+            self.fail("not_finite")
+        return value
+
+
 class LocationSerializer(serializers.Serializer):
     id = serializers.CharField(required=False, allow_blank=True, max_length=240)
     label = serializers.CharField(max_length=300)
-    lat = serializers.FloatField(min_value=-90, max_value=90)
-    lon = serializers.FloatField(min_value=-180, max_value=180)
+    lat = FiniteFloatField(min_value=-90, max_value=90)
+    lon = FiniteFloatField(min_value=-180, max_value=180)
     city = serializers.CharField(required=False, allow_blank=True, max_length=120)
     state = serializers.CharField(required=False, allow_blank=True, max_length=120)
     country = serializers.CharField(required=False, allow_blank=True, max_length=120)
@@ -31,7 +45,7 @@ class TripPlanRequestSerializer(serializers.Serializer):
     current_location = LocationSerializer()
     pickup_location = LocationSerializer()
     dropoff_location = LocationSerializer()
-    current_cycle_used_hours = serializers.FloatField(min_value=0, max_value=70)
+    current_cycle_used_hours = FiniteFloatField(min_value=0, max_value=70)
     departure_at = serializers.CharField(required=False, allow_blank=False, max_length=80)
     home_terminal_timezone = serializers.CharField(required=False, allow_blank=False, max_length=80)
     metadata = TripMetadataSerializer(required=False, default=dict)
@@ -42,7 +56,7 @@ class TripPlanRequestSerializer(serializers.Serializer):
         if timezone_name:
             try:
                 zone = ZoneInfo(str(timezone_name))
-            except ZoneInfoNotFoundError as exc:
+            except (ValueError, ZoneInfoNotFoundError) as exc:
                 raise serializers.ValidationError(
                     {"home_terminal_timezone": "Enter a valid IANA timezone."}
                 ) from exc

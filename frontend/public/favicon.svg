@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Spotter">
+  <rect width="64" height="64" rx="14" fill="#043e4c" />
+  <circle cx="22" cy="22" r="7" fill="#f47b67" />
+  <circle cx="42" cy="22" r="7" fill="#7fcdbb" />
+  <circle cx="22" cy="42" r="7" fill="#8dc6e8" />
+  <circle cx="42" cy="42" r="7" fill="#d6e3e8" />
+</svg>

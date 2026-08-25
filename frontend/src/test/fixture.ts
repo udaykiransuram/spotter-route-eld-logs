@@ -96,6 +96,14 @@ export const tripPlanFixture: TripPlan = {
       ],
     },
   ],
+  metadata: {
+    driver_name: "Alex Driver",
+    carrier_name: "Spotter Logistics",
+    main_office_address: "123 Dispatch Way, Richmond, VA 23219",
+    home_terminal_address: "880 Terminal Road, Richmond, VA 23224",
+    vehicle_number: "101",
+    shipping_document_number: "BOL-9921",
+  },
   assumptions: [
     "Property-carrying driver",
     "70 hour / 8 day cycle",
@@ -104,5 +112,6 @@ export const tripPlanFixture: TripPlan = {
     "1 hour for pickup and drop-off",
   ],
   warnings: [],
+  notice: "Generated trip plan — not a certified ELD record.",
   attribution: { routing: "Geoapify", map: "OpenFreeMap · OpenStreetMap" },
 };

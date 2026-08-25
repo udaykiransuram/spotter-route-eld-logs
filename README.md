@@ -6,11 +6,12 @@ A stateless Django and React assessment app that builds a heavy-truck route from
 
 ## What is included
 
-- React 19, TypeScript, and Vite frontend with `/` route results and `/logs` daily logs.
+- React 19, Material UI, TypeScript, and Vite frontend with `/` route results and `/logs` daily logs.
 - Django REST Framework API with no database, authentication, history, or admin surface.
-- Geoapify adapter for worldwide autocomplete, `heavy_truck` routing, reverse geocoding/timezone lookup, and nearby fuel stations. Driving-hours rules remain based on US property-carrying HOS assumptions.
+- Geoapify adapter whose live autocomplete requests are explicitly filtered to the United States, plus `heavy_truck` routing, reverse geocoding/timezone lookup, and nearby fuel stations.
 - Deterministic demo routing when no Geoapify key is configured, so reviewers can run the complete flow offline.
-- MapLibre with the OpenFreeMap Positron style and visible provider attribution.
+- MapLibre with a calmly restyled OpenFreeMap Liberty basemap and visible provider attribution.
+- Intent-based loading for the route map and log screens, print-only SVG rendering, cached autocomplete results, and bounded concurrent optional stop lookups.
 - One canonical `DutyEvent` sequence used by the stops, itinerary, summary, and daily log projections.
 - A code-native SVG recreation of the supplied paper-log layout, with sharp vector labels, rules, duty traces, fullscreen viewing, and print/PDF controls. The original `blank-paper-log.png` remains only as the visual reference.
 
@@ -24,9 +25,18 @@ A stateless Django and React assessment app that builds a heavy-truck route from
 
 ![Filled daily driver log with totals, remarks, and log controls](docs/screenshots/daily-logs.png)
 
+## Submission links
+
+These values are intentionally left as placeholders until the repository, both Vercel projects, and the walkthrough are public and verified. Do not submit with placeholders remaining.
+
+- GitHub repository: **TODO — add public repository URL**
+- Deployed frontend: **TODO — add production frontend URL**
+- Deployed API: **TODO — add production API URL**
+- Loom walkthrough: **TODO — add 3–5 minute recording URL**
+
 ## Run locally
 
-Requirements: Python 3.12+, Node 22+, and pnpm 11.
+Requirements: Python 3.12+, Node 22+, and pnpm 10.34.5. The exact pnpm version is pinned in `package.json` and the lockfile to a release supported by Vercel. Install Playwright's bundled Chromium before the browser smoke test with `pnpm --filter frontend exec playwright install chromium`.
 
 Install and start the API:
 
@@ -53,7 +63,7 @@ pnpm install
 pnpm --filter frontend dev
 ```
 
-Open `http://127.0.0.1:5173`. The frontend defaults to `http://127.0.0.1:8000`; override it with `VITE_API_BASE_URL` in the same root `.env`.
+Open `http://127.0.0.1:5173`. Vite development defaults to `http://127.0.0.1:8000`; override it with `VITE_API_BASE_URL` in the same root `.env`. `VITE_API_BASE_URL` is mandatory for every production build and must be the deployed API origin. The production client deliberately has no localhost fallback.
 
 ## Sample trip
 
@@ -64,7 +74,9 @@ The form starts with a review-ready example:
 - Drop-off: Dallas, TX
 - Current cycle used: 30 hours
 
-Select an autocomplete result for each location, then choose **Generate route & logs**. The deterministic route is intentionally long enough to demonstrate breaks, a 10-hour rest, a fuel stop, multiple dates, and filled daily sheets.
+Keep the selected defaults or search and choose an unambiguous U.S. autocomplete result for each location, then choose **Generate route & logs**. Leaving departure blank starts the trip at the current time in the detected home-terminal timezone. UTC is used only when timezone detection is unavailable. The deterministic route is intentionally long enough to demonstrate breaks, a 10-hour rest, a fuel stop, multiple dates, and filled daily sheets.
+
+**Current cycle used** means the driver's combined driving and On Duty—not driving hours already consumed in the simplified 70-hour/8-day cycle at departure. Entering `0` leaves all 70 hours available; entering `70` leaves none and causes the scheduler to place a 34-hour restart before further driving. This is a starting aggregate, not a reconstruction of the driver's prior eight daily records.
 
 ## Architecture
 
@@ -82,15 +94,39 @@ backend (Django REST Framework)
 
 The API stays stateless. The browser stores only the last successful response in versioned `sessionStorage`, allowing `/logs` to survive an in-tab refresh without creating trip history.
 
+### Repository layout
+
+```text
+backend/
+  config/                 Django settings, URLs, and deployment entrypoints
+  trips/
+    providers/            Geoapify and deterministic demo adapters
+    serializers.py        Request validation and timezone normalization
+    scheduler.py          Pure HOS duty-event scheduler
+    logs.py               Midnight splitting and daily-log projection
+    service.py            Route/provider/scheduler orchestration
+    tests/                 API, provider, scheduler, and invariant tests
+frontend/
+  src/
+    api/                   Typed HTTP client and response validation
+    components/            Reusable form, map, itinerary, and log UI
+    lib/                   Formatting and runtime contract guards
+    pages/                 Route and lazy-loaded daily-log screens
+    state/                 Versioned sessionStorage plan state
+    test/                  Shared deterministic response fixture
+  e2e/                     Desktop and mobile Playwright smoke tests
+docs/screenshots/          Submission screenshots referenced below
+```
+
 ## API
 
 ### `GET /api/v1/health`
 
-Returns service health and the active provider (`demo` or `geoapify`).
+Returns service health, the active provider (`demo` or `geoapify`), and whether that provider is configured. Demo mode returns HTTP `200`. Live mode returns HTTP `200` only when a non-empty `GEOAPIFY_API_KEY` is present; if live mode is selected without a key, it returns HTTP `503` with `status: "not_configured"` and `configured: false`. This is a configuration check, not a paid provider request, so rejected credentials or upstream availability are surfaced when a route or suggestion is requested.
 
 ### `GET /api/v1/locations/suggest?q=...`
 
-Returns worldwide location candidates as `{ id, label, city, state, country, lat, lon }`. A typed value is not accepted as a waypoint until the user chooses an unambiguous candidate.
+Returns `{ suggestions, attribution }`. Live Geoapify autocomplete includes `filter=countrycode:us`, so the UI offers U.S. candidates shaped as `{ id, label, city, state, country, lat, lon }`. A typed value is not accepted as a waypoint until the user chooses an unambiguous candidate.
 
 ### `POST /api/v1/trip-plans`
 
@@ -102,6 +138,7 @@ Request:
   "pickup_location": {"id": "...", "label": "Nashville, TN, USA", "lat": 36.1627, "lon": -86.7816},
   "dropoff_location": {"id": "...", "label": "Dallas, TX, USA", "lat": 32.7767, "lon": -96.797},
   "current_cycle_used_hours": 24,
+  "departure_at": "2026-08-25T06:00:00-04:00",
   "metadata": {
     "driver_name": "",
     "carrier_name": "",
@@ -113,9 +150,9 @@ Request:
 }
 ```
 
-`departure_at` and `home_terminal_timezone` are optional advanced inputs. When omitted, the API uses the current time and detects the timezone from the starting location; UTC is the explicit fallback when detection is unavailable. A local time that occurs twice at the end of daylight saving time must include its UTC offset (for example, `-04:00` or `-05:00`) so the intended instant is unambiguous.
+The form normally omits `departure_at` and `home_terminal_timezone`, so the API uses the current time in an IANA timezone detected from the starting location. UTC is the explicit fallback when detection is unavailable. A user may enter a later local departure or override the timezone. A local time that occurs twice at the end of daylight saving time must include its UTC offset (for example, `-04:00` or `-05:00`) so the intended instant is unambiguous.
 
-The response contains route GeoJSON, turn-by-turn instructions, summary totals, scheduled stops, chronological duty events, daily logs, metadata, assumptions, warnings, the non-certified-record notice, and attribution.
+The response contains route GeoJSON, turn-by-turn instructions, summary totals, scheduled stops, chronological duty events, daily logs, assumptions, warnings, and attribution. Entered `metadata` and the non-certified-record `notice` are canonical top-level response fields; they are intentionally not duplicated inside every daily-log object. The frontend passes those top-level values into each rendered sheet.
 
 Errors use one stable envelope:
 
@@ -132,7 +169,7 @@ Errors use one stable envelope:
 
 Provider timeouts, quota failures, unavailable routes, rejected credentials, invalid inputs, and identical waypoints are normalized into this shape.
 
-Anonymous autocomplete and trip-generation requests have best-effort process-local throttles (`120/minute` and `30/hour` per client respectively). Deployments can tune these with `LOCATION_SUGGEST_RATE` and `TRIP_PLAN_RATE` without adding a database; strict cross-instance quota protection should be enforced at the hosting edge or with a shared cache.
+Anonymous autocomplete and trip-generation requests have best-effort process-local throttles (`120/minute` and `30/hour` per client respectively). Deployments can tune these with `LOCATION_SUGGEST_RATE` and `TRIP_PLAN_RATE` without adding a database. On serverless hosting, counters are neither durable across cold starts nor shared across instances, so they are not strict quota protection; enforce production limits at the hosting edge or replace the cache with a shared store.
 
 ## HOS model used by this assessment
 
@@ -147,12 +184,13 @@ Anonymous autocomplete and trip-generation requests have best-effort process-loc
 
 Split sleeper berth, short-haul exceptions, adverse-condition extensions, team driving, personal conveyance, traffic, and weather are intentionally excluded.
 
-Daily sheets are split at midnight in the home-terminal timezone. A driving event crossing midnight is interpolated to the correct route position for that sheet's From/To values and remarks. Time before departure and after trip completion is Off Duty, active statuses carry through midnight, the four paper-grid status totals reconcile to 24 hours, and daily mileage reconciles to route mileage. A trip ending exactly at midnight remains on the prior sheet with a `24:00` completion remark rather than creating an empty next-day sheet. On daylight-saving transition dates, the real 23- or 25-hour interval is projected monotonically onto the 24-hour paper grid and clearly noted.
+Daily sheets are split at midnight in the home-terminal timezone, with exactly one primary paper-log sheet generated for every calendar day touched by the trip. A driving event crossing midnight is interpolated to the correct route position for that sheet's From/To values and remarks. Time before departure and after trip completion is Off Duty, active statuses carry through midnight, the four paper-grid status totals reconcile to 24 hours, and daily mileage reconciles to route mileage. The print layout keeps each full daily sheet together and starts the next sheet on a new PDF page. A trip ending exactly at midnight remains on the prior sheet with a `24:00` completion remark rather than creating an empty next-day sheet. On daylight-saving transition dates, the real 23- or 25-hour interval is projected monotonically onto the 24-hour paper grid and clearly noted.
 
 ## Checks
 
 ```bash
 backend/.venv/bin/ruff check backend
+backend/.venv/bin/ruff format --check backend
 backend/.venv/bin/python backend/manage.py check
 backend/.venv/bin/pytest backend
 pnpm --filter frontend lint
@@ -162,21 +200,25 @@ pnpm --filter frontend build
 pnpm --filter frontend test:e2e
 ```
 
+The local and CI Playwright configurations both use bundled Chromium. Install it once before the first browser run:
+
+```bash
+pnpm --filter frontend exec playwright install chromium
+pnpm --filter frontend test:e2e
+```
+
 The backend suite covers event ordering/non-overlap, 8/11/14-hour boundaries, pickup/fuel break qualification, 0/near-70/70 cycle inputs, combined resets, multiple fuel intervals, leg-aware route interpolation, midnight/timezone and daylight-saving splitting, mileage and 24-hour invariants, provider failures, and request validation. Frontend tests cover form and result interactions, storage, daily tabs, accessible remarks, responsive log controls, and metadata. Playwright starts isolated demo servers on dedicated ports and runs the complete generation-to-logs flow at desktop and mobile sizes, so a developer's real-provider servers cannot make the smoke test nondeterministic. GitHub Actions runs linting, type checks, both test suites, the production build, and these browser smoke tests.
 
 ## Deploy as two Vercel projects
 
-Use this one repository for two projects:
+Use this one repository for two projects. Vercel environment variables are configured independently for each project; the root `.env` is for local development only and must never be committed.
 
-1. **API project** — root directory `backend`; add `GEOAPIFY_API_KEY`, `USE_DEMO_PROVIDER=false`, a strong unique `DJANGO_SECRET_KEY` of at least 50 characters, `DJANGO_DEBUG=false`, `DJANGO_ALLOWED_HOSTS`, and `CORS_ALLOWED_ORIGINS`. Python 3.12 is pinned in `backend/.python-version`. HTTPS redirect, secure-cookie, and one-year HSTS defaults turn on automatically when debug is false.
-2. **Frontend project** — root directory `frontend`; add `VITE_API_BASE_URL` with the deployed API origin.
+1. **API project** — root directory `backend`; add `GEOAPIFY_API_KEY`, `USE_DEMO_PROVIDER=false`, a strong unique `DJANGO_SECRET_KEY` of at least 50 characters, `DJANGO_DEBUG=false`, `DJANGO_ALLOWED_HOSTS`, and `CORS_ALLOWED_ORIGINS`. Keep the Geoapify key here only; it must never be exposed through a `VITE_` variable. `DJANGO_ALLOWED_HOSTS` is a comma-separated hostname list without schemes, while `CORS_ALLOWED_ORIGINS` is a comma-separated list of exact frontend origins including `https://`. Python 3.12 is pinned in `backend/.python-version`. HTTPS redirect, secure-cookie, and one-year HSTS defaults turn on automatically when debug is false.
+2. **Frontend project** — root directory `frontend`; set `VITE_API_BASE_URL` to the deployed HTTPS API origin before building. This value is embedded into the browser bundle at build time, so changing it requires a redeploy.
 
-Both folders include Vercel routing configuration. Add the final production origins to the backend host/CORS variables before the first end-to-end production check.
+Both folders include Vercel routing configuration. Add the final production origins to the backend host/CORS variables before the first end-to-end production check. Local `.vercel/` link metadata is ignored by Git.
 
-- Frontend URL: _add after deployment_
-- API URL: _add after deployment_
-
-Before sharing the assessment, verify the API health endpoint reports `geoapify`, generate one real route from the production frontend, open every daily sheet, and save a PDF once. Then replace the two URL placeholders above and add the GitHub and Loom links to the submission.
+Before sharing the assessment, verify `GET /api/v1/health` returns HTTP `200` with `provider: "geoapify"` and `configured: true`, generate one real route from the production frontend, open every daily sheet, and save a PDF once. Then replace every placeholder in **Submission links**.
 
 ## Suggested 3–5 minute Loom outline
 
@@ -186,6 +228,15 @@ Before sharing the assessment, verify the API health endpoint reports `geoapify`
 4. Show the filled log trace, totals, remarks, fullscreen view, and Print/Save PDF.
 5. Briefly show the Django scheduling/projection modules and React page/component structure.
 6. End with the automated checks, Vercel configuration, demo-vs-Geoapify behavior, and known limitations.
+
+## Official references
+
+- [FMCSA summary of property-carrying hours-of-service rules](https://www.fmcsa.dot.gov/regulations/hours-service/summary-hours-service-regulations)
+- [Geoapify Routing API documentation](https://apidocs.geoapify.com/docs/routing/)
+- [OpenFreeMap quick start and attribution guidance](https://openfreemap.org/quick_start/)
+- [Vercel zero-configuration Django support](https://vercel.com/changelog/zero-configuration-django-support)
+- [Vercel-supported package managers](https://vercel.com/docs/package-managers)
+- [Playwright browser installation and channel documentation](https://playwright.dev/docs/browsers)
 
 ## Limitations
 

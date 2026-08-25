@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { DutyStatus } from "../types";
 
 export const LOG_GRAPH_LEFT = 64;
@@ -42,7 +43,7 @@ function quarterTickPath(x: number, isHalfHour: boolean) {
  * Keeping it in the same coordinate system lets the generated values and
  * duty trace remain aligned while making every printed rule and label sharp.
  */
-export function DailyLogTemplate() {
+export const DailyLogTemplate = memo(function DailyLogTemplate() {
   return (
     <g
       className="daily-log-template"
@@ -249,7 +250,7 @@ export function DailyLogTemplate() {
         <g data-recap-column="70-c" fontSize="5">
           <text x="226" y="465">C. Total</text>
           <text x="226" y="474">hours on</text>
-          <text x="226" y="483">duty last 5</text>
+          <text x="226" y="483">duty last 8</text>
           <text x="226" y="492" textLength="33" lengthAdjust="spacingAndGlyphs">days including</text>
           <text x="226" y="501">today.</text>
         </g>
@@ -301,4 +302,4 @@ export function DailyLogTemplate() {
       <line x1="26" y1="516" x2="459" y2="516" stroke="#080d12" strokeWidth="1.8" />
     </g>
   );
-}
+});

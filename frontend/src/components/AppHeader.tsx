@@ -1,3 +1,5 @@
+import AppBar from "@mui/material/AppBar";
+import Toolbar from "@mui/material/Toolbar";
 import { Link } from "react-router-dom";
 
 function SpotterMark() {
@@ -13,15 +15,15 @@ function SpotterMark() {
 
 export function AppHeader() {
   return (
-    <header className="app-header">
-      <div className="app-header__inner">
+    <AppBar className="app-header" component="header" elevation={0} position="static">
+      <Toolbar className="app-header__inner" disableGutters sx={{ minHeight: "100% !important" }}>
         <Link className="brand" to="/" aria-label="Spotter route and ELD logs home">
           <SpotterMark />
           <span className="brand-word">spotter</span>
         </Link>
         <span className="app-header__rule" aria-hidden="true" />
         <span className="app-header__product">Route &amp; ELD Logs</span>
-      </div>
-    </header>
+      </Toolbar>
+    </AppBar>
   );
 }

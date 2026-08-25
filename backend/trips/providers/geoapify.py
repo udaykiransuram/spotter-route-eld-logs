@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import atexit
 from collections.abc import Iterable
+from math import isfinite
+from threading import Lock
 from typing import Any
 
 import httpx
@@ -20,6 +23,28 @@ from trips.providers.base import ProviderError
 
 METERS_PER_MILE = 1609.344
 FUEL_SEARCH_RADIUS_METERS = 8000
+_shared_clients: dict[float, httpx.Client] = {}
+_shared_clients_lock = Lock()
+
+
+def _shared_client(timeout: float) -> httpx.Client:
+    with _shared_clients_lock:
+        client = _shared_clients.get(timeout)
+        if client is None:
+            client = httpx.Client(timeout=timeout)
+            _shared_clients[timeout] = client
+        return client
+
+
+def _close_shared_clients() -> None:
+    with _shared_clients_lock:
+        clients = list(_shared_clients.values())
+        _shared_clients.clear()
+    for client in clients:
+        client.close()
+
+
+atexit.register(_close_shared_clients)
 
 
 class GeoapifyRoutingProvider:
@@ -40,7 +65,12 @@ class GeoapifyRoutingProvider:
                 status_code=503,
             )
         self.api_key = api_key
-        self.client = httpx.Client(timeout=timeout, transport=transport)
+        self._owns_client = transport is not None
+        self.client = (
+            httpx.Client(timeout=timeout, transport=transport)
+            if self._owns_client
+            else _shared_client(timeout)
+        )
 
     def suggest(self, query: str, *, limit: int = 6) -> list[Location]:
         payload = self._get(
@@ -48,11 +78,17 @@ class GeoapifyRoutingProvider:
             {
                 "text": query,
                 "format": "json",
+                "filter": "countrycode:us",
                 "limit": limit,
             },
         )
         results = payload.get("results", [])
-        return [self._location_from_properties(item) for item in results]
+        if not isinstance(results, list):
+            raise _invalid_response()
+        try:
+            return [self._location_from_properties(item) for item in results]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise _invalid_response() from exc
 
     def route(self, waypoints: list[Location]) -> RouteResult:
         payload = self._get(
@@ -69,6 +105,8 @@ class GeoapifyRoutingProvider:
             },
         )
         features = payload.get("features") or []
+        if not isinstance(features, list):
+            raise _invalid_response()
         if not features:
             raise ProviderError(
                 "route_not_found",
@@ -77,9 +115,16 @@ class GeoapifyRoutingProvider:
             )
 
         feature = features[0]
+        if not isinstance(feature, dict):
+            raise _invalid_response()
         properties = feature.get("properties") or {}
         geometry = feature.get("geometry") or {}
-        coordinates = tuple(self._flatten_geometry(geometry))
+        if not isinstance(properties, dict) or not isinstance(geometry, dict):
+            raise _invalid_response()
+        try:
+            coordinates = tuple(self._flatten_geometry(geometry))
+        except (IndexError, TypeError, ValueError) as exc:
+            raise _invalid_response() from exc
         if len(coordinates) < 2:
             raise ProviderError(
                 "invalid_provider_response",
@@ -87,9 +132,21 @@ class GeoapifyRoutingProvider:
             )
 
         raw_legs = properties.get("legs") or []
-        legs = self._parse_legs(raw_legs, waypoints, properties)
-        leg_coordinates = self._leg_coordinates_from_geometry(geometry, len(legs))
-        instructions = self._parse_instructions(raw_legs, legs)
+        if not isinstance(raw_legs, list):
+            raise _invalid_response()
+        if raw_legs and (
+            len(raw_legs) != len(waypoints) - 1
+            or not all(isinstance(raw_leg, dict) for raw_leg in raw_legs)
+        ):
+            raise _invalid_response("The routing provider returned incomplete route legs.")
+        try:
+            legs = self._parse_legs(raw_legs, waypoints, properties)
+            leg_coordinates = self._leg_coordinates_from_geometry(geometry, len(legs))
+            instructions = self._parse_instructions(raw_legs, legs)
+        except ProviderError:
+            raise
+        except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:
+            raise _invalid_response() from exc
         distance = sum(leg.distance_miles for leg in legs)
         duration = sum(leg.duration_hours for leg in legs)
         return RouteResult(
@@ -114,14 +171,28 @@ class GeoapifyRoutingProvider:
             },
         )
         features = payload.get("features") or []
+        if not isinstance(features, list):
+            raise _invalid_response()
         if not features:
             return None
-        properties = features[0].get("properties") or {}
-        return NearbyPlace(
-            label=properties.get("name") or properties.get("formatted") or "Fuel stop",
-            lat=float(properties["lat"]),
-            lon=float(properties["lon"]),
-        )
+        try:
+            properties = features[0].get("properties") or {}
+            lat = float(properties["lat"])
+            lon = float(properties["lon"])
+            if (
+                not isfinite(lat)
+                or not isfinite(lon)
+                or not -90 <= lat <= 90
+                or not -180 <= lon <= 180
+            ):
+                raise ValueError("invalid fuel coordinates")
+            return NearbyPlace(
+                label=properties.get("name") or properties.get("formatted") or "Fuel stop",
+                lat=lat,
+                lon=lon,
+            )
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            raise _invalid_response() from exc
 
     def reverse(self, coordinate: tuple[float, float]) -> ReverseLocation:
         lon, lat = coordinate
@@ -130,15 +201,24 @@ class GeoapifyRoutingProvider:
             {"lat": lat, "lon": lon, "format": "json", "limit": 1},
         )
         results = payload.get("results") or []
+        if not isinstance(results, list):
+            raise _invalid_response()
         if not results:
             return ReverseLocation(f"{lat:.4f}, {lon:.4f}")
         properties = results[0]
+        if not isinstance(properties, dict):
+            raise _invalid_response()
         timezone = properties.get("timezone") or {}
+        if not isinstance(timezone, dict):
+            raise _invalid_response()
         timezone_name = timezone.get("name") if isinstance(timezone, dict) else None
+        if timezone_name is not None and not isinstance(timezone_name, str):
+            raise _invalid_response()
         return ReverseLocation(properties.get("formatted") or "Route stop", timezone_name)
 
     def close(self) -> None:
-        self.client.close()
+        if self._owns_client:
+            self.client.close()
 
     def _get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
         request_params = {**params, "apiKey": self.api_key}
@@ -146,7 +226,7 @@ class GeoapifyRoutingProvider:
         for attempt in range(2):
             try:
                 response = self.client.get(f"{self.base_url}{path}", params=request_params)
-            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            except httpx.TransportError as exc:
                 last_error = exc
                 if attempt == 0:
                     continue
@@ -178,12 +258,15 @@ class GeoapifyRoutingProvider:
                     retryable=response.status_code >= 500,
                 )
             try:
-                return response.json()
+                payload = response.json()
             except ValueError as exc:
                 raise ProviderError(
                     "invalid_provider_response",
                     "The routing provider returned an invalid response.",
                 ) from exc
+            if not isinstance(payload, dict):
+                raise _invalid_response()
+            return payload
 
         raise ProviderError(
             "provider_unavailable",
@@ -193,11 +276,17 @@ class GeoapifyRoutingProvider:
 
     @staticmethod
     def _location_from_properties(item: dict[str, Any]) -> Location:
+        if not isinstance(item, dict):
+            raise TypeError("location result must be an object")
+        lat = float(item["lat"])
+        lon = float(item["lon"])
+        if not isfinite(lat) or not isfinite(lon) or not -90 <= lat <= 90 or not -180 <= lon <= 180:
+            raise ValueError("invalid location coordinates")
         return Location(
             id=str(item.get("place_id") or item.get("formatted") or ""),
             label=item.get("formatted") or item.get("address_line1") or "Unknown location",
-            lat=float(item["lat"]),
-            lon=float(item["lon"]),
+            lat=lat,
+            lon=lon,
             city=item.get("city") or item.get("county") or "",
             state=item.get("state_code") or item.get("state") or "",
             country=item.get("country") or "United States",
@@ -266,7 +355,13 @@ class GeoapifyRoutingProvider:
                     duration_hours=duration_s / 3600,
                 )
             )
-        if not legs or any(leg.distance_miles <= 0 or leg.duration_hours <= 0 for leg in legs):
+        if not legs or any(
+            not isfinite(leg.distance_miles)
+            or not isfinite(leg.duration_hours)
+            or leg.distance_miles <= 0
+            or leg.duration_hours <= 0
+            for leg in legs
+        ):
             raise ProviderError(
                 "invalid_provider_response",
                 "The routing provider returned invalid route totals.",
@@ -283,10 +378,14 @@ class GeoapifyRoutingProvider:
         for leg in legs:
             raw = raw_legs[leg.index] if leg.index < len(raw_legs) else {}
             steps = raw.get("steps") or []
+            if not isinstance(steps, list) or not all(isinstance(step, dict) for step in steps):
+                raise _invalid_response()
             step_mile = cumulative_miles
             for step in steps:
                 distance = float(step.get("distance") or 0) / METERS_PER_MILE
                 duration = float(step.get("time") or 0) / 60
+                if not isfinite(distance) or not isfinite(duration) or distance < 0 or duration < 0:
+                    raise _invalid_response()
                 instruction_value = step.get("instruction") or {}
                 if isinstance(instruction_value, dict):
                     text = instruction_value.get("text") or instruction_value.get("type")
@@ -322,3 +421,9 @@ class GeoapifyRoutingProvider:
                 sequence += 1
             cumulative_miles += leg.distance_miles
         return instructions
+
+
+def _invalid_response(
+    message: str = "The routing provider returned an invalid response.",
+) -> ProviderError:
+    return ProviderError("invalid_provider_response", message)

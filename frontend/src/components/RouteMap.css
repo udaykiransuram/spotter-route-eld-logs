@@ -8,8 +8,15 @@
 .map-stop-marker .map-marker {
   position: absolute;
   z-index: 2;
-  margin: -14.5px 0 0 -14.5px;
+  margin: -15px 0 0 -15px;
   pointer-events: auto;
+}
+
+.map-stop-marker .map-marker::before {
+  position: absolute;
+  inset: -7px;
+  border-radius: 50%;
+  content: "";
 }
 
 .map-stop-marker__anchor {

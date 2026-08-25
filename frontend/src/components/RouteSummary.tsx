@@ -1,4 +1,6 @@
+import Paper from "@mui/material/Paper";
 import { CalendarDays, CircleGauge, Clock3, MapPin, Route } from "lucide-react";
+import { memo } from "react";
 import { formatHours, formatMiles } from "../lib/format";
 import type { TripSummary } from "../types";
 
@@ -6,7 +8,7 @@ interface RouteSummaryProps {
   summary: TripSummary;
 }
 
-export function RouteSummary({ summary }: RouteSummaryProps) {
+export const RouteSummary = memo(function RouteSummary({ summary }: RouteSummaryProps) {
   const metrics = [
     { label: "Distance", value: formatMiles(summary.distance_miles), Icon: Route },
     { label: "Driving time", value: formatHours(summary.driving_hours), Icon: CircleGauge },
@@ -16,7 +18,7 @@ export function RouteSummary({ summary }: RouteSummaryProps) {
   ];
 
   return (
-    <dl className="route-summary" aria-label="Trip summary">
+    <Paper className="route-summary" component="dl" elevation={0} aria-label="Trip summary">
       {metrics.map(({ label, value, Icon }) => (
         <div className="route-summary__metric" key={label}>
           <Icon aria-hidden="true" />
@@ -26,6 +28,6 @@ export function RouteSummary({ summary }: RouteSummaryProps) {
           </span>
         </div>
       ))}
-    </dl>
+    </Paper>
   );
-}
+});

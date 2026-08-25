@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from math import isfinite
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
@@ -40,7 +41,8 @@ def env_list(name: str, default: str = "") -> list[str]:
     return [value.strip() for value in os.getenv(name, default).split(",") if value.strip()]
 
 
-DEBUG = env_bool("DJANGO_DEBUG", True)
+IS_VERCEL = bool(os.getenv("VERCEL"))
+DEBUG = env_bool("DJANGO_DEBUG", not IS_VERCEL)
 LOCAL_SECRET_KEY = "spotter-local-development-only"
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", LOCAL_SECRET_KEY).strip()
 if not DEBUG and (SECRET_KEY == LOCAL_SECRET_KEY or len(SECRET_KEY) < 50):
@@ -103,18 +105,21 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_SSL_REDIRECT = env_bool("DJANGO_SECURE_SSL_REDIRECT", not DEBUG)
 SESSION_COOKIE_SECURE = env_bool("DJANGO_SESSION_COOKIE_SECURE", not DEBUG)
 CSRF_COOKIE_SECURE = env_bool("DJANGO_CSRF_COOKIE_SECURE", not DEBUG)
-SECURE_HSTS_SECONDS = int(
-    os.getenv("DJANGO_SECURE_HSTS_SECONDS", "0" if DEBUG else "31536000")
-)
-SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool(
-    "DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS", not DEBUG
-)
+SECURE_HSTS_SECONDS = int(os.getenv("DJANGO_SECURE_HSTS_SECONDS", "0" if DEBUG else "31536000"))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS", not DEBUG)
 SECURE_HSTS_PRELOAD = env_bool("DJANGO_SECURE_HSTS_PRELOAD", not DEBUG)
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = "DENY"
 
 GEOAPIFY_API_KEY = os.getenv("GEOAPIFY_API_KEY", "").strip()
-USE_DEMO_PROVIDER = env_bool("USE_DEMO_PROVIDER", not bool(GEOAPIFY_API_KEY))
-ROUTING_TIMEOUT_SECONDS = float(os.getenv("ROUTING_TIMEOUT_SECONDS", "12"))
+# Demo routing is an explicit production choice. In local debug mode it remains
+# the convenient default when no live key is configured.
+USE_DEMO_PROVIDER = env_bool("USE_DEMO_PROVIDER", DEBUG and not bool(GEOAPIFY_API_KEY))
+try:
+    ROUTING_TIMEOUT_SECONDS = float(os.getenv("ROUTING_TIMEOUT_SECONDS", "12"))
+except ValueError as exc:
+    raise ImproperlyConfigured("ROUTING_TIMEOUT_SECONDS must be a positive number.") from exc
+if not isfinite(ROUTING_TIMEOUT_SECONDS) or ROUTING_TIMEOUT_SECONDS <= 0:
+    raise ImproperlyConfigured("ROUTING_TIMEOUT_SECONDS must be a positive number.")
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

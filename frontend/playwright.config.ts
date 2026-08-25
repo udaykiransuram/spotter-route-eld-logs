@@ -2,7 +2,6 @@ import { defineConfig, devices } from "@playwright/test";
 
 const isCI = Boolean(process.env.CI);
 const pythonCommand = process.env.PYTHON_BIN ?? "../backend/.venv/bin/python";
-const localChrome = isCI ? {} : { channel: "chrome" as const };
 const frontendPort = Number.parseInt(process.env.PLAYWRIGHT_FRONTEND_PORT ?? "55173", 10);
 const backendPort = Number.parseInt(process.env.PLAYWRIGHT_BACKEND_PORT ?? "58000", 10);
 const frontendUrl = `http://127.0.0.1:${frontendPort}`;
@@ -22,11 +21,11 @@ export default defineConfig({
   projects: [
     {
       name: "desktop-chromium",
-      use: { ...devices["Desktop Chrome"], ...localChrome },
+      use: { ...devices["Desktop Chrome"] },
     },
     {
       name: "mobile-chromium",
-      use: { ...devices["Pixel 5"], ...localChrome },
+      use: { ...devices["Pixel 5"] },
     },
   ],
   webServer: [

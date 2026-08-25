@@ -79,6 +79,7 @@ export interface ScheduledStop {
   lat: number;
   lon: number;
   scheduled_at: string;
+  end_at?: string;
   duration_minutes: number;
   duty_status: DutyStatus;
   reason: string;
@@ -86,15 +87,13 @@ export interface ScheduledStop {
 }
 
 export type DutyEventType =
-  | "pre_trip"
   | "driving"
   | "pickup"
   | "dropoff"
   | "fuel"
   | "break"
   | "rest"
-  | "cycle_restart"
-  | "post_trip";
+  | "cycle_restart";
 
 export interface DutyEvent {
   id: string;
@@ -102,6 +101,7 @@ export interface DutyEvent {
   event_type: DutyEventType;
   start_at: string;
   end_at: string;
+  duration_hours?: number;
   start_location: string;
   end_location: string;
   start_coordinates: [number, number];
@@ -119,7 +119,9 @@ export interface DailyLogSegment {
 }
 
 export interface DailyLogRemark {
+  event_id?: string;
   time: string;
+  minute?: number;
   timezone_abbreviation?: string;
   status: DutyStatus;
   location: string;
@@ -162,8 +164,10 @@ export interface TripPlan {
   stops: ScheduledStop[];
   duty_events: DutyEvent[];
   daily_logs: DailyLog[];
+  metadata: TripMetadata;
   assumptions: string[];
   warnings: string[];
+  notice: string;
   attribution: {
     routing: string;
     map: string;

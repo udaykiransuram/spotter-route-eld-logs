@@ -1,9 +1,13 @@
 import { expect, test } from "@playwright/test";
 
-test("generates a route, synchronizes stops, and opens filled daily logs", async ({ page }) => {
+test("generates a route, synchronizes stops, and opens filled daily logs", async ({ page }, testInfo) => {
   const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
-  await page.route("https://tiles.openfreemap.org/styles/positron", async (route) => {
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  await page.route("https://tiles.openfreemap.org/styles/liberty", async (route) => {
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
@@ -28,11 +32,17 @@ test("generates a route, synchronizes stops, and opens filled daily logs", async
   await expect(page.getByLabel("Truck route map with scheduled stops")).toBeVisible();
   await expect(page.locator(".route-map-shell")).toHaveAttribute("data-map-status", "ready");
   await expect(page.locator(".route-map canvas")).toBeVisible();
+  await expect(page.locator("link[rel='preconnect'][href='https://tiles.openfreemap.org']")).toHaveCount(1);
+
+  await expect(page.locator(".directions-panel__body li")).toHaveCount(0);
+  await page.getByText(/Turn-by-turn route instructions/).click();
+  expect(await page.locator(".directions-panel__body li").count()).toBeGreaterThan(0);
 
   const mapMarkers = page.locator(".route-map .map-marker");
   const itineraryStops = page.locator(".itinerary-stop");
   await expect(mapMarkers).toHaveCount(await itineraryStops.count());
   await page.locator(".route-map .map-marker[aria-label*='drop-off' i]").click();
+  await expect(page.locator(".route-map .map-marker[aria-label*='drop-off' i]")).toHaveAttribute("aria-pressed", "true");
   const selectedStop = page.locator(".itinerary-stop[aria-pressed='true']");
   await expect(selectedStop).toContainText("Drop-off");
   await expect(selectedStop).toContainText("Dallas");
@@ -46,6 +56,41 @@ test("generates a route, synchronizes stops, and opens filled daily logs", async
   const generatedLogCount = await page.locator("[role='tablist'][aria-label='Trip days'] [role='tab']").count();
   expect(generatedLogCount).toBeGreaterThan(1);
 
+  if (testInfo.project.name === "mobile-chromium") {
+    const mobileSizing = await page.locator(".log-paper-scroll").evaluate((scrollRegion) => {
+      const sheet = scrollRegion.querySelector(".log-sheet");
+      if (!sheet) return null;
+      return {
+        regionWidth: scrollRegion.getBoundingClientRect().width,
+        sheetWidth: sheet.getBoundingClientRect().width,
+      };
+    });
+    expect(mobileSizing).not.toBeNull();
+    expect(mobileSizing!.sheetWidth).toBeLessThanOrEqual(mobileSizing!.regionWidth + 1);
+  }
+
+  await page.evaluate(() => {
+    let fullscreenElement: Element | null = null;
+    const setFullscreenElement = (element: Element | null) => {
+      fullscreenElement = element;
+      document.dispatchEvent(new Event("fullscreenchange"));
+    };
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => fullscreenElement,
+    });
+    HTMLElement.prototype.requestFullscreen = async function requestFullscreen() {
+      setFullscreenElement(this);
+    };
+    document.exitFullscreen = async () => {
+      setFullscreenElement(null);
+    };
+  });
+  await page.getByRole("button", { name: "View full screen" }).click();
+  await expect(page.locator(".log-stage").getByRole("button", { name: "Exit full screen" })).toBeVisible();
+  await page.locator(".log-stage").getByRole("button", { name: "Exit full screen" }).click();
+  await expect(page.locator(".log-stage").getByRole("button", { name: "Exit full screen" })).toHaveCount(0);
+
   const dayTwo = page.getByRole("tab", { name: /Day 2/ });
   await dayTwo.click();
   await expect(dayTwo).toHaveAttribute("aria-selected", "true");
@@ -54,13 +99,14 @@ test("generates a route, synchronizes stops, and opens filled daily logs", async
   await page.evaluate(() => {
     window.print = () => document.documentElement.setAttribute("data-print-called", "true");
   });
+  await expect(page.locator(".print-log-page")).toHaveCount(0);
   await page.getByRole("button", { name: "Print / Save PDF" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-print-called", "true");
 
   await page.emulateMedia({ media: "print" });
   await expect(page.locator(".print-all-logs")).toBeVisible();
-  await expect(page.locator(".print-log-details-page")).toHaveCount(generatedLogCount);
-  await expect(page.locator(".print-log-details-page").first()).toContainText("Full location");
+  await expect(page.locator(".print-log-page")).toHaveCount(generatedLogCount);
+  await expect(page.locator(".print-log-details-page")).toHaveCount(0);
   const printFitsPage = await page.locator(".print-log-page").first().evaluate((printPage) => {
     const sheet = printPage.querySelector(".log-sheet");
     if (!sheet) return false;
@@ -77,6 +123,7 @@ test("generates a route, synchronizes stops, and opens filled daily logs", async
   }));
   expect(widths.document).toBeLessThanOrEqual(widths.viewport + 1);
   expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
 });
 
 test("keeps the itinerary usable when WebGL is unavailable", async ({ page }) => {

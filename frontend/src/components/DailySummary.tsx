@@ -1,3 +1,5 @@
+import LinearProgress from "@mui/material/LinearProgress";
+import Paper from "@mui/material/Paper";
 import { CheckCircle2, Gauge, Route } from "lucide-react";
 import { formatMiles } from "../lib/format";
 import type { DailyLog } from "../types";
@@ -15,7 +17,7 @@ export function DailySummary({ log, dayNumber }: { log: DailyLog; dayNumber: num
   const cyclePercent = (boundedCycleUsed / 70) * 100;
 
   return (
-    <aside className="daily-summary" aria-labelledby="daily-summary-title">
+    <Paper component="aside" className="daily-summary" elevation={0} aria-labelledby="daily-summary-title">
       <header className="daily-summary__header">
         <div>
           <span>Daily totals</span>
@@ -53,9 +55,15 @@ export function DailySummary({ log, dayNumber }: { log: DailyLog; dayNumber: num
 
       <div className="cycle-progress">
         <div><span>70-hour cycle</span><strong>{Math.max(0, 70 - cycleUsed).toFixed(2)} h remaining</strong></div>
-        <span className="cycle-progress__track" role="progressbar" aria-label="70-hour cycle used" aria-valuemin={0} aria-valuemax={70} aria-valuenow={boundedCycleUsed}>
-          <span style={{ width: `${cyclePercent}%` }} />
-        </span>
+        <LinearProgress
+          className="cycle-progress__track"
+          value={cyclePercent}
+          variant="determinate"
+          aria-label="70-hour cycle used"
+          aria-valuemax={70}
+          aria-valuemin={0}
+          aria-valuenow={boundedCycleUsed}
+        />
       </div>
 
       <div className="log-timezone">
@@ -67,6 +75,6 @@ export function DailySummary({ log, dayNumber }: { log: DailyLog; dayNumber: num
         <p>Generated trip plan — not a certified ELD record.</p>
       </div>
       {log.recap?.restart_completed ? <p className="restart-note">A 34-hour cycle restart completed on this day.</p> : null}
-    </aside>
+    </Paper>
   );
 }

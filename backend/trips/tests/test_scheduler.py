@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from math import nan
 
 import pytest
 
 from trips.domain import Location, RouteLeg, RouteLocator, RouteResult
 from trips.providers.demo import DemoRoutingProvider
-from trips.scheduler import schedule_route
+from trips.scheduler import SchedulingError, schedule_route
 
 DEPARTURE = datetime(2026, 8, 25, 6, tzinfo=UTC)
 
@@ -287,3 +288,9 @@ def test_timeline_invariants(cycle_used: float) -> None:
             daily_driving = shift = break_driving = 0.0
         elif event.event_type == "cycle_restart":
             daily_driving = shift = break_driving = cycle = 0.0
+
+
+@pytest.mark.parametrize("cycle_used", [nan, -0.1, 70.1])
+def test_rejects_invalid_cycle_values_at_the_domain_boundary(cycle_used: float) -> None:
+    with pytest.raises(SchedulingError, match="finite number from 0 to 70"):
+        schedule_route(make_route(1, 1), DEPARTURE, cycle_used)

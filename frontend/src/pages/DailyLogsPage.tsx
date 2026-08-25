@@ -1,115 +1,51 @@
+import Button from "@mui/material/Button";
+import IconButton from "@mui/material/IconButton";
+import Paper from "@mui/material/Paper";
+import Tab from "@mui/material/Tab";
+import Tabs from "@mui/material/Tabs";
 import { ChevronLeft, ChevronRight, Expand, FileText, Minimize, Printer } from "lucide-react";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Link, Navigate } from "react-router-dom";
 import { AppHeader } from "../components/AppHeader";
+import {
+  formatLongLogDate,
+  LogMetadataDetails,
+  remarkDisplayTime,
+} from "../components/DailyLogDetails";
 import { DailyLogSheet } from "../components/DailyLogSheet";
 import { DailySummary } from "../components/DailySummary";
 import { dutyStatusLabels, formatDayLabel } from "../lib/format";
-import { usePlan } from "../state/plan-store";
-import type { DailyLog, DailyLogRemark, TripMetadata } from "../types";
-
-const longDateFormatter = new Intl.DateTimeFormat("en-US", {
-  weekday: "long",
-  month: "long",
-  day: "numeric",
-  year: "numeric",
-});
-
-const metadataFieldDefinitions = [
-  ["driver_name", "Driver"],
-  ["carrier_name", "Carrier"],
-  ["main_office_address", "Main office"],
-  ["home_terminal_address", "Home terminal"],
-  ["vehicle_number", "Vehicle number"],
-  ["shipping_document_number", "Shipping document"],
-] as const satisfies ReadonlyArray<readonly [keyof TripMetadata, string]>;
-
-function metadataEntries(metadata?: TripMetadata) {
-  return metadataFieldDefinitions.flatMap(([key, label]) => {
-    const value = metadata?.[key]?.trim();
-    return value ? [{ key, label, value }] : [];
-  });
-}
-
-function remarkDisplayTime(remark: DailyLogRemark) {
-  const abbreviation = remark.timezone_abbreviation?.trim();
-  return abbreviation ? `${remark.time} ${abbreviation}` : remark.time;
-}
-
-function LogMetadataDetails({ metadata }: { metadata?: TripMetadata }) {
-  const entries = metadataEntries(metadata);
-  if (entries.length === 0) return null;
-
-  return (
-    <section className="log-metadata-details" aria-labelledby="log-metadata-title">
-      <h2 id="log-metadata-title">Driver, carrier &amp; document details</h2>
-      <dl>
-        {entries.map(({ key, label, value }) => (
-          <div key={key}><dt>{label}</dt><dd>{value}</dd></div>
-        ))}
-      </dl>
-    </section>
-  );
-}
-
-function PrintLogDetails({ log, dayNumber, metadata }: { log: DailyLog; dayNumber: number; metadata?: TripMetadata }) {
-  const entries = metadataEntries(metadata);
-  return (
-    <section className="print-log-details-page">
-      <header>
-        <div>
-          <span>Supplemental daily-log details · Generated planning log—not a certified ELD record</span>
-          <h1>{longDateFormatter.format(new Date(`${log.date}T12:00:00`))}</h1>
-        </div>
-        <strong>Day {dayNumber}</strong>
-      </header>
-      <dl className="print-log-details-route">
-        <div><dt>From</dt><dd>{log.from_location}</dd></div>
-        <div><dt>To</dt><dd>{log.to_location}</dd></div>
-        <div><dt>Timezone</dt><dd>{log.timezone.replaceAll("_", " ")}</dd></div>
-      </dl>
-      {log.grid_note ? (
-        <div className="print-log-grid-note">
-          <strong>Daylight-saving time-grid note</strong>
-          <p>{log.grid_note}</p>
-        </div>
-      ) : null}
-      {entries.length > 0 ? (
-        <section className="print-log-details-metadata" aria-label="Driver, carrier and document details">
-          <dl>
-            {entries.map(({ key, label, value }) => (
-              <div key={key}><dt>{label}</dt><dd>{value}</dd></div>
-            ))}
-          </dl>
-        </section>
-      ) : null}
-      <table>
-        <thead><tr><th>Time</th><th>Status</th><th>Event</th><th>Full location</th></tr></thead>
-        <tbody>
-          {log.remarks.map((remark, index) => (
-            <tr key={`${remark.time}-${index}`}>
-              <td>{remarkDisplayTime(remark)}</td>
-              <td>{dutyStatusLabels[remark.status]}</td>
-              <td>{remark.note}</td>
-              <td>{remark.location || "-"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </section>
-  );
-}
+import { usePlan } from "../state/plan-context";
 
 export function DailyLogsPage() {
   const { plan } = usePlan();
   const [activeIndex, setActiveIndex] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
+  const [fullscreenError, setFullscreenError] = useState<string | null>(null);
+  const [printReady, setPrintReady] = useState(false);
   const logRegionRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  }, []);
 
   useEffect(() => {
     const onFullscreenChange = () => setFullscreen(document.fullscreenElement === logRegionRef.current);
     document.addEventListener("fullscreenchange", onFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    const preparePrintSheets = () => flushSync(() => setPrintReady(true));
+    const releasePrintSheets = () => setPrintReady(false);
+    window.addEventListener("beforeprint", preparePrintSheets);
+    window.addEventListener("afterprint", releasePrintSheets);
+    return () => {
+      window.removeEventListener("beforeprint", preparePrintSheets);
+      window.removeEventListener("afterprint", releasePrintSheets);
+    };
   }, []);
 
   if (!plan || plan.daily_logs.length === 0) return <Navigate to="/" replace />;
@@ -118,21 +54,34 @@ export function DailyLogsPage() {
   const pickup = plan.request?.pickup_location.label;
   const destination = plan.request?.dropoff_location.label ?? plan.daily_logs.at(-1)?.to_location;
   const routeLabel = [origin, pickup, destination].filter(Boolean).join(" → ");
-  const activeDate = longDateFormatter.format(new Date(`${activeLog.date}T12:00:00`));
+  const activeDate = formatLongLogDate(activeLog.date);
   const panInstructionId = `log-pan-instruction-${activeIndex}`;
+  const metadata = plan.metadata ?? plan.request?.metadata;
 
   const requestFullscreen = async () => {
-    if (document.fullscreenElement) {
-      await document.exitFullscreen?.();
-    } else {
-      await logRegionRef.current?.requestFullscreen?.();
+    try {
+      if (document.fullscreenElement) {
+        if (!document.exitFullscreen) throw new Error("Fullscreen is unavailable.");
+        await document.exitFullscreen();
+      } else {
+        if (!logRegionRef.current?.requestFullscreen) throw new Error("Fullscreen is unavailable.");
+        await logRegionRef.current.requestFullscreen();
+      }
+      setFullscreenError(null);
+    } catch {
+      setFullscreenError("Full-screen view is not available in this browser. The log remains printable at full size.");
     }
   };
 
   const selectTab = (index: number) => {
     const nextIndex = Math.max(0, Math.min(plan.daily_logs.length - 1, index));
     setActiveIndex(nextIndex);
-    window.requestAnimationFrame(() => document.getElementById(`day-tab-${nextIndex}`)?.focus());
+    document.getElementById(`day-tab-${nextIndex}`)?.focus();
+  };
+
+  const printLogs = () => {
+    flushSync(() => setPrintReady(true));
+    window.print();
   };
 
   return (
@@ -146,42 +95,71 @@ export function DailyLogsPage() {
             <p>{routeLabel} · {plan.daily_logs.length} {plan.daily_logs.length === 1 ? "day" : "days"}</p>
           </div>
           <div className="logs-page__actions">
-            <button className="secondary-button" type="button" onClick={requestFullscreen}>
-              {fullscreen ? <Minimize size={18} aria-hidden="true" /> : <Expand size={18} aria-hidden="true" />}
+            <Button
+              className="secondary-button"
+              color="inherit"
+              startIcon={fullscreen ? <Minimize size={18} aria-hidden="true" /> : <Expand size={18} aria-hidden="true" />}
+              sx={{ "& .MuiButton-startIcon": { margin: 0 } }}
+              type="button"
+              variant="outlined"
+              onClick={requestFullscreen}
+            >
               {fullscreen ? "Exit full screen" : "View full screen"}
-            </button>
-            <button className="secondary-button" type="button" onClick={() => window.print()}>
-              <Printer size={18} aria-hidden="true" />Print / Save PDF
-            </button>
+            </Button>
+            <Button
+              className="secondary-button"
+              color="inherit"
+              startIcon={<Printer size={18} aria-hidden="true" />}
+              sx={{ "& .MuiButton-startIcon": { margin: 0 } }}
+              type="button"
+              variant="outlined"
+              onClick={printLogs}
+            >
+              Print / Save PDF
+            </Button>
           </div>
         </header>
 
         <nav className="day-tabs-nav" aria-label="Daily log navigation">
-          <button className="day-arrow" type="button" disabled={activeIndex === 0} onClick={() => selectTab(activeIndex - 1)} aria-label="Previous day"><ChevronLeft /></button>
-          <div className="day-tabs" role="tablist" aria-label="Trip days">
+          <IconButton className="day-arrow" type="button" disabled={activeIndex === 0} onClick={() => selectTab(activeIndex - 1)} aria-label="Previous day"><ChevronLeft /></IconButton>
+          <Tabs
+            value={activeIndex}
+            aria-label="Trip days"
+            slotProps={{ list: { className: "day-tabs" } }}
+            sx={{
+              minHeight: 41,
+              minWidth: 0,
+              "& .MuiTabs-indicator": { display: "none" },
+              "& .MuiTabs-scroller": { minHeight: 41 },
+            }}
+            onChange={(_, index: number) => setActiveIndex(index)}
+          >
             {plan.daily_logs.map((log, index) => (
-              <button
+              <Tab
                 id={`day-tab-${index}`}
                 key={log.date}
-                type="button"
-                role="tab"
-                aria-selected={activeIndex === index}
                 aria-controls={`day-panel-${index}`}
-                tabIndex={activeIndex === index ? 0 : -1}
-                onClick={() => setActiveIndex(index)}
+                label={formatDayLabel(log.date, index + 1)}
+                value={index}
                 onKeyDown={(event) => {
-                  if (event.key === "ArrowLeft") selectTab(activeIndex - 1);
-                  if (event.key === "ArrowRight") selectTab(activeIndex + 1);
-                  if (event.key === "Home") selectTab(0);
-                  if (event.key === "End") selectTab(plan.daily_logs.length - 1);
+                  const targetIndex = {
+                    ArrowLeft: activeIndex - 1,
+                    ArrowRight: activeIndex + 1,
+                    Home: 0,
+                    End: plan.daily_logs.length - 1,
+                  }[event.key];
+                  if (targetIndex === undefined) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  selectTab(targetIndex);
                 }}
-              >
-                {formatDayLabel(log.date, index + 1)}
-              </button>
+              />
             ))}
-          </div>
-          <button className="day-arrow" type="button" disabled={activeIndex === plan.daily_logs.length - 1} onClick={() => selectTab(activeIndex + 1)} aria-label="Next day"><ChevronRight /></button>
+          </Tabs>
+          <IconButton className="day-arrow" type="button" disabled={activeIndex === plan.daily_logs.length - 1} onClick={() => selectTab(activeIndex + 1)} aria-label="Next day"><ChevronRight /></IconButton>
         </nav>
+
+        {fullscreenError ? <div className="form-alert form-alert--error" role="alert">{fullscreenError}</div> : null}
 
         <div
           className="log-stage"
@@ -190,7 +168,19 @@ export function DailyLogsPage() {
           role="tabpanel"
           aria-labelledby={`day-tab-${activeIndex}`}
         >
-          <div className="log-stage__paper">
+          {fullscreen ? (
+            <Button
+              className="fullscreen-exit-control"
+              color="inherit"
+              startIcon={<Minimize size={18} aria-hidden="true" />}
+              type="button"
+              variant="contained"
+              onClick={requestFullscreen}
+            >
+              Exit full screen
+            </Button>
+          ) : null}
+          <Paper className="log-stage__paper" elevation={0}>
             <div className="log-document-bar">
               <div className="log-document-bar__title">
                 <span className="log-document-icon" aria-hidden="true"><FileText size={19} /></span>
@@ -202,7 +192,7 @@ export function DailyLogsPage() {
               <span className="log-sheet-count">Sheet {activeIndex + 1} of {plan.daily_logs.length}</span>
             </div>
             <div className="log-paper-canvas">
-              <p className="log-pan-instruction" id={panInstructionId}>Swipe or scroll horizontally to read the full paper log.</p>
+              <p className="log-pan-instruction" id={panInstructionId}>The paper log fits the screen. Use full screen to inspect small details.</p>
               <div
                 className="log-paper-scroll"
                 role="region"
@@ -211,11 +201,11 @@ export function DailyLogsPage() {
                 tabIndex={0}
               >
                 <div className="log-paper-scroll__inner">
-                  <DailyLogSheet log={activeLog} metadata={plan.request?.metadata} />
+                  <DailyLogSheet log={activeLog} metadata={metadata} />
                 </div>
               </div>
             </div>
-            <LogMetadataDetails metadata={plan.request?.metadata} />
+            <LogMetadataDetails metadata={metadata} />
             <section className="remarks-list" aria-labelledby="remarks-title">
               <header className="remarks-list__header">
                 <div>
@@ -246,19 +236,18 @@ export function DailyLogsPage() {
                 </ol>
               ) : <p>No duty-status changes recorded.</p>}
             </section>
-          </div>
+          </Paper>
           <DailySummary log={activeLog} dayNumber={activeIndex + 1} />
         </div>
-        <div className="print-all-logs" aria-hidden="true">
-          {plan.daily_logs.map((log, index) => (
-            <Fragment key={log.date}>
-              <div className="print-log-page">
-                <DailyLogSheet log={log} metadata={plan.request?.metadata} />
+        {printReady ? (
+          <div className="print-all-logs" aria-hidden="true">
+            {plan.daily_logs.map((log) => (
+              <div className="print-log-page" key={log.date}>
+                <DailyLogSheet log={log} metadata={metadata} />
               </div>
-              <PrintLogDetails log={log} dayNumber={index + 1} metadata={plan.request?.metadata} />
-            </Fragment>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : null}
       </main>
     </div>
   );

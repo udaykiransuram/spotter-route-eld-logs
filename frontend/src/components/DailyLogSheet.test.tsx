@@ -24,6 +24,7 @@ describe("DailyLogSheet", () => {
     expect(boundedRecapLines).toHaveLength(4);
     expect(boundedRecapLines.every((line) => line.getAttribute("lengthAdjust") === "spacingAndGlyphs")).toBe(true);
     expect(screen.getAllByText("minus A*")).toHaveLength(2);
+    expect(screen.getByText("duty last 8")).toBeInTheDocument();
 
     const statusRows = [...container.querySelectorAll("[data-status-row]")];
     expect(statusRows.map((row) => row.getAttribute("data-status-row"))).toEqual([
@@ -57,6 +58,25 @@ describe("DailyLogSheet", () => {
       expect(x2).toBeGreaterThanOrEqual(64);
       expect(x2).toBeLessThanOrEqual(454);
     }
+  });
+
+  it("keeps single-driver mileage aligned without inventing recap history", () => {
+    const { container } = render(<DailyLogSheet log={tripPlanFixture.daily_logs[0]} />);
+
+    const drivingMiles = container.querySelector('[data-paper-field="total-miles-driving-today"]');
+    const totalMileage = container.querySelector('[data-paper-field="total-mileage-today"]');
+    expect(drivingMiles).toHaveTextContent("490");
+    expect(totalMileage).toHaveTextContent("490");
+    expect(totalMileage?.textContent).toBe(drivingMiles?.textContent);
+
+    expect(container.querySelector('[data-paper-recap="on-duty-today"]')).toHaveTextContent("9.50");
+    const unsupportedRecapFields = [...container.querySelectorAll('[data-paper-recap="unsupported"]')];
+    expect(unsupportedRecapFields).toHaveLength(6);
+    expect(unsupportedRecapFields.every((field) => field.textContent === "—")).toBe(true);
+
+    const overlay = container.querySelector(".log-overlay-text");
+    expect(overlay).not.toHaveTextContent("39.50");
+    expect(overlay).not.toHaveTextContent("30.50");
   });
 
   it("keeps the city in international paper locations", () => {
@@ -111,7 +131,7 @@ describe("DailyLogSheet", () => {
     expect(container.querySelector('[data-paper-remark]')?.parentElement).toHaveAttribute("clip-path");
   });
 
-  it("clips every fixed metadata field with a visible continuation marker", () => {
+  it("clips every fixed metadata field to its bounded paper region", () => {
     const metadata = {
       driver_name: `Driver-${"D".repeat(113)}`,
       carrier_name: `Carrier-${"C".repeat(152)}`,
@@ -137,7 +157,6 @@ describe("DailyLogSheet", () => {
     expect(container.querySelector('[data-paper-field="main-office"]')).toHaveAttribute("textLength", "228");
     expect(container.querySelector('[data-paper-field="home-terminal"]')).toHaveAttribute("textLength", "228");
     expect(container.querySelector('[data-paper-field="driver"]')).toHaveAttribute("textLength", "278");
-    expect(container.querySelector("[data-paper-continuation]")).toHaveTextContent("full value on supplemental page");
     expect(container.querySelectorAll("clipPath")).toHaveLength(9);
   });
 });

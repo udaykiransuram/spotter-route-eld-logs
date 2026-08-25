@@ -1,5 +1,27 @@
 import type { DutyStatus, StopType } from "../types";
 
+const milesFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+const dayFormatter = new Intl.DateTimeFormat("en-US", {
+  weekday: "short",
+  month: "short",
+  day: "numeric",
+});
+const timeFormatters = new Map<string, Intl.DateTimeFormat>();
+const localDateTimeFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function cachedFormatter(
+  cache: Map<string, Intl.DateTimeFormat>,
+  key: string,
+  locale: string,
+  options: Intl.DateTimeFormatOptions,
+) {
+  const existing = cache.get(key);
+  if (existing) return existing;
+  const formatter = new Intl.DateTimeFormat(locale, options);
+  cache.set(key, formatter);
+  return formatter;
+}
+
 export const dutyStatusLabels: Record<DutyStatus, string> = {
   off_duty: "Off Duty",
   sleeper_berth: "Sleeper Berth",
@@ -17,7 +39,7 @@ export const stopTypeLabels: Record<StopType, string> = {
 };
 
 export function formatMiles(value: number) {
-  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value)} mi`;
+  return `${milesFormatter.format(value)} mi`;
 }
 
 export function formatHours(value: number) {
@@ -37,7 +59,7 @@ export function formatDuration(minutes: number) {
 export function formatTime(iso: string, timezone?: string) {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "—";
-  return new Intl.DateTimeFormat("en-US", {
+  return cachedFormatter(timeFormatters, timezone ?? "local", "en-US", {
     hour: "numeric",
     minute: "2-digit",
     timeZone: timezone,
@@ -46,16 +68,12 @@ export function formatTime(iso: string, timezone?: string) {
 
 export function formatDayLabel(dateString: string, dayNumber?: number) {
   const date = new Date(`${dateString}T12:00:00`);
-  const label = new Intl.DateTimeFormat("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  }).format(date);
+  const label = dayFormatter.format(date);
   return dayNumber ? `${label} · Day ${dayNumber}` : label;
 }
 
 export function toLocalDateTimeValue(date = new Date(), timezone = "America/New_York") {
-  const parts = new Intl.DateTimeFormat("en-CA", {
+  const parts = cachedFormatter(localDateTimeFormatters, timezone, "en-CA", {
     timeZone: timezone,
     year: "numeric",
     month: "2-digit",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -10,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from django.conf import settings
 
-from trips.domain import DutyEvent, Location, ReverseLocation, haversine_miles
+from trips.domain import DutyEvent, Location, NearbyPlace, ReverseLocation, haversine_miles
 from trips.logs import build_daily_logs
 from trips.providers import DemoRoutingProvider, GeoapifyRoutingProvider, RoutingProvider
 from trips.providers.base import ProviderError
@@ -18,6 +19,8 @@ from trips.scheduler import schedule_route
 
 MAP_ATTRIBUTION = "© OpenFreeMap © OpenStreetMap contributors"
 MAX_FUEL_SUGGESTION_MILES = 5.0
+MAX_OPTIONAL_STOP_LOOKUPS = 12
+MAX_OPTIONAL_STOP_CONCURRENCY = 4
 
 ASSUMPTIONS = [
     "Property-carrying driver using the 70-hour/8-day cycle with no adverse-condition extension.",
@@ -111,8 +114,6 @@ class TripPlannerService:
         events = self._enrich_stops(events, warnings)
         daily_logs = build_daily_logs(events, str(timezone_name), route, cycle_used)
         metadata = dict(data.get("metadata") or {})
-        for daily_log in daily_logs:
-            daily_log["metadata"] = metadata
         stop_events = [event for event in events if event.status != "driving"]
         stops = [_stop_dict(event, index + 1) for index, event in enumerate(stop_events)]
 
@@ -166,50 +167,121 @@ class TripPlannerService:
         }
 
     def _enrich_stops(self, events: list[DutyEvent], warnings: list[str]) -> list[DutyEvent]:
-        enriched: list[DutyEvent] = []
-        lookup_warning_added = False
-        for event in events:
-            try:
-                if event.event_type == "fuel":
-                    place = self.provider.nearby_fuel(event.start_coordinates)
+        enriched = list(events)
+        fuel_warning_added = False
+        lookup_limit_warning_added = False
+        lookup_groups: dict[
+            tuple[str, float, float],
+            tuple[DutyEvent, list[int]],
+        ] = {}
+
+        for index, event in enumerate(events):
+            needs_lookup = event.event_type in {"fuel", "break", "rest", "cycle_restart"}
+            if not needs_lookup:
+                continue
+            lookup_type = "fuel" if event.event_type == "fuel" else "reverse"
+            lon, lat = event.start_coordinates
+            key = (lookup_type, round(lon, 5), round(lat, 5))
+            existing = lookup_groups.get(key)
+            if existing is not None:
+                existing[1].append(index)
+                continue
+            if len(lookup_groups) >= MAX_OPTIONAL_STOP_LOOKUPS:
+                if not lookup_limit_warning_added:
+                    warnings.append(
+                        "Additional optional stop-name lookups were skipped to keep route "
+                        "generation responsive; route-mile labels are shown instead."
+                    )
+                    lookup_limit_warning_added = True
+                continue
+            lookup_groups[key] = (event, [index])
+
+        candidates = list(lookup_groups.items())
+        if not candidates:
+            return enriched
+
+        lookup_results: dict[
+            tuple[str, float, float],
+            NearbyPlace | ReverseLocation | None,
+        ] = {}
+        provider_failed = False
+
+        # Probe one lookup first so a provider outage preserves the circuit breaker and
+        # does not fan out more optional requests. Once healthy, independent lookups run
+        # in small batches and are reassembled in canonical event order below.
+        first_key, (first_event, _) = candidates[0]
+        try:
+            lookup_results[first_key] = self._lookup_stop(first_event)
+        except ProviderError:
+            provider_failed = True
+
+        if not provider_failed and len(candidates) > 1:
+            with ThreadPoolExecutor(max_workers=MAX_OPTIONAL_STOP_CONCURRENCY) as executor:
+                remaining = candidates[1:]
+                for batch_start in range(0, len(remaining), MAX_OPTIONAL_STOP_CONCURRENCY):
+                    batch = remaining[batch_start : batch_start + MAX_OPTIONAL_STOP_CONCURRENCY]
+                    futures = {
+                        key: executor.submit(self._lookup_stop, event) for key, (event, _) in batch
+                    }
+                    for key, _group in batch:
+                        try:
+                            lookup_results[key] = futures[key].result()
+                        except ProviderError:
+                            provider_failed = True
+                            break
+                    if provider_failed:
+                        break
+
+        if provider_failed:
+            warnings.append(
+                "Some stop names could not be resolved; remaining optional lookups were "
+                "skipped and route-mile labels are shown instead."
+            )
+
+        for key, (event, indices) in candidates:
+            if key not in lookup_results:
+                continue
+            result = lookup_results[key]
+            if event.event_type == "fuel":
+                place = result if isinstance(result, NearbyPlace) else None
+                for index in indices:
+                    fuel_event = events[index]
                     if place is not None:
                         distance_miles = haversine_miles(
-                            event.start_coordinates, (place.lon, place.lat)
+                            fuel_event.start_coordinates,
+                            (place.lon, place.lat),
                         )
                         if distance_miles <= MAX_FUEL_SUGGESTION_MILES:
-                            enriched.append(event.with_nearby_suggestion(place, distance_miles))
-                        else:
-                            enriched.append(event)
-                            if not lookup_warning_added:
-                                warnings.append(
-                                    f"{place.label} was {distance_miles:.1f} mi from "
-                                    "the scheduled route point and was ignored because "
-                                    "it is outside the 5-mile fuel-suggestion radius; "
-                                    "not added to route."
-                                )
-                                lookup_warning_added = True
-                        continue
-
-                    enriched.append(event)
-                    if not lookup_warning_added:
+                            enriched[index] = fuel_event.with_nearby_suggestion(
+                                place,
+                                distance_miles,
+                            )
+                        elif not fuel_warning_added:
+                            warnings.append(
+                                f"{place.label} was {distance_miles:.1f} mi from "
+                                "the scheduled route point and was ignored because "
+                                "it is outside the 5-mile fuel-suggestion radius; "
+                                "not added to route."
+                            )
+                            fuel_warning_added = True
+                    elif not fuel_warning_added:
                         warnings.append(
                             "A fuel station within 5 miles of the scheduled route point "
                             "could not be confirmed; the route-mile fuel point is shown."
                         )
-                        lookup_warning_added = True
-                    continue
-                if event.event_type in {"break", "rest", "cycle_restart"}:
-                    reverse = self.provider.reverse(event.start_coordinates)
-                    enriched.append(_with_reverse_location(event, reverse))
-                    continue
-            except ProviderError:
-                if not lookup_warning_added:
-                    warnings.append(
-                        "Some stop names could not be resolved; route-mile labels are shown instead."
-                    )
-                    lookup_warning_added = True
-            enriched.append(event)
+                        fuel_warning_added = True
+                continue
+
+            if isinstance(result, ReverseLocation):
+                for index in indices:
+                    enriched[index] = _with_reverse_location(events[index], result)
+
         return enriched
+
+    def _lookup_stop(self, event: DutyEvent) -> NearbyPlace | ReverseLocation | None:
+        if event.event_type == "fuel":
+            return self.provider.nearby_fuel(event.start_coordinates)
+        return self.provider.reverse(event.start_coordinates)
 
 
 def _location(value: dict[str, Any]) -> Location:

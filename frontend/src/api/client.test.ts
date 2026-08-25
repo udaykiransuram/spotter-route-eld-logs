@@ -14,6 +14,32 @@ describe("API client", () => {
     ]);
   });
 
+  it("rejects malformed location suggestions", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ suggestions: [{ label: "Missing coordinates" }] }),
+    }));
+    await expect(suggestLocations("Dallas")).rejects.toMatchObject({
+      code: "invalid_response",
+      retryable: true,
+      status: 502,
+    });
+  });
+
+  it("reuses a recent autocomplete result without another network request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ suggestions: [{ id: "cache-1", label: "Cache Test, TX", lat: 31, lon: -97 }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await suggestLocations("Cache Test Place");
+    await expect(suggestLocations(" cache test place ")).resolves.toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("posts the typed request and attaches it to the returned plan", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => tripPlanFixture });
     vi.stubGlobal("fetch", fetchMock);
@@ -21,6 +47,34 @@ describe("API client", () => {
     const plan = await generateTripPlan(request);
     expect(plan.request).toEqual(request);
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/v1/trip-plans"), expect.objectContaining({ method: "POST" }));
+  });
+
+  it("rejects a successful response with malformed nested trip-plan data", async () => {
+    const malformedPlan = {
+      ...tripPlanFixture,
+      daily_logs: [
+        {
+          ...tripPlanFixture.daily_logs[0],
+          status_totals: {
+            ...tripPlanFixture.daily_logs[0].status_totals,
+            driving: "8.5",
+          },
+        },
+        tripPlanFixture.daily_logs[1],
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => malformedPlan,
+    }));
+
+    await expect(generateTripPlan(tripPlanFixture.request!)).rejects.toMatchObject({
+      code: "invalid_response",
+      message: "The route service returned an incomplete response. Please try again.",
+      retryable: true,
+      status: 502,
+    });
   });
 
   it("preserves the backend error envelope", async () => {

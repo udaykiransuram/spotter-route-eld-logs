@@ -1,5 +1,5 @@
 import type { DailyLog, DailyLogRemark, TripMetadata } from "../types";
-import { useId } from "react";
+import { memo, useId } from "react";
 import { DailyLogTemplate, LOG_GRAPH_LEFT, LOG_GRAPH_WIDTH, LOG_LANE_Y } from "./DailyLogTemplate";
 
 interface DailyLogSheetProps {
@@ -18,6 +18,7 @@ const regionAbbreviations: Record<string, string> = {
   wales: "WLS",
   "northern ireland": "NIR",
 };
+const unsupportedRecapFieldXs = [165.5, 204.5, 245.5, 323.5, 362.5, 403.5] as const;
 
 function wrapForSheet(value: string, charactersPerLine: number, maxLines: number): PaperValue {
   let remaining = value.trim().replace(/\s+/g, " ");
@@ -110,7 +111,7 @@ function LogTrace({ log }: { log: DailyLog }) {
   );
 }
 
-export function DailyLogSheet({ log, metadata = {} }: DailyLogSheetProps) {
+export const DailyLogSheet = memo(function DailyLogSheet({ log, metadata = {} }: DailyLogSheetProps) {
   const captionId = useId();
   const titleId = useId();
   const descriptionId = useId();
@@ -120,8 +121,6 @@ export function DailyLogSheet({ log, metadata = {} }: DailyLogSheetProps) {
   const year = String(date.getFullYear());
   const totals = log.status_totals;
   const onDutyToday = log.recap?.on_duty_today ?? totals.driving + totals.on_duty;
-  const cycleUsedAtEnd = log.recap?.cycle_used_at_end ?? log.cycle_used_hours;
-  const remainingCycleHours = log.recap?.remaining_cycle_hours ?? Math.max(0, 70 - cycleUsedAtEnd);
   const totalHours = totals.off_duty + totals.sleeper_berth + totals.driving + totals.on_duty;
   const clipId = useId().replaceAll(":", "");
   const fromLocation = fitForPaper(locationForPaperField(log.from_location), 42);
@@ -167,7 +166,7 @@ export function DailyLogSheet({ log, metadata = {} }: DailyLogSheetProps) {
           <clipPath id={`${clipId}-shipping`}><rect x="24" y="337" width="72" height="17" /></clipPath>
           <clipPath id={`${clipId}-remarks`}><rect x="104" y="284" width="353" height="94" /></clipPath>
         </defs>
-        <g className="log-overlay-text" fill="#06152d" fontFamily="Inter, Arial, sans-serif">
+        <g className="log-overlay-text" fill="#06152d" fontFamily="Arial, Helvetica, sans-serif">
           <text data-paper-field="date-month" x="187" y="17.5" textAnchor="middle" fontSize="8" fontWeight="700">{month}</text>
           <text data-paper-field="date-day" x="229" y="17.5" textAnchor="middle" fontSize="8" fontWeight="700">{day}</text>
           <text data-paper-field="date-year" x="271.5" y="17.5" textAnchor="middle" fontSize="8" fontWeight="700">{year}</text>
@@ -175,8 +174,8 @@ export function DailyLogSheet({ log, metadata = {} }: DailyLogSheetProps) {
           <text data-paper-field="from" x="156" y="44" textAnchor="middle" fontSize="6.5" fontWeight="600" clipPath={`url(#${clipId}-from)`} textLength={fromLocation.truncated ? 159 : undefined} lengthAdjust={fromLocation.truncated ? "spacingAndGlyphs" : undefined}>{fromLocation.lines[0]}</text>
           <text data-paper-field="to" x="355" y="44" textAnchor="middle" fontSize="6.5" fontWeight="600" clipPath={`url(#${clipId}-to)`} textLength={toLocation.truncated ? 154 : undefined} lengthAdjust={toLocation.truncated ? "spacingAndGlyphs" : undefined}>{toLocation.lines[0]}</text>
 
-          <text x="94" y="79" textAnchor="middle" fontSize="10" fontWeight="700">{Math.round(log.total_miles)}</text>
-          <text x="181" y="79" textAnchor="middle" fontSize="10" fontWeight="700">{Math.round(log.total_miles)}</text>
+          <text data-paper-field="total-miles-driving-today" x="94" y="79" textAnchor="middle" fontSize="10" fontWeight="700">{Math.round(log.total_miles)}</text>
+          <text data-paper-field="total-mileage-today" x="181" y="79" textAnchor="middle" fontSize="10" fontWeight="700">{Math.round(log.total_miles)}</text>
           <text
             data-paper-field="vehicle"
             x="135"
@@ -198,7 +197,7 @@ export function DailyLogSheet({ log, metadata = {} }: DailyLogSheetProps) {
           <text data-paper-field="home-terminal" x="232" y="117" fontSize="6.25" fontWeight="600" clipPath={`url(#${clipId}-terminal)`} textLength={homeTerminal.truncated ? 228 : undefined} lengthAdjust={homeTerminal.truncated ? "spacingAndGlyphs" : undefined}>{homeTerminal.lines[0]}</text>
           <text data-paper-field="driver" x="52" y="143" fontSize="6.25" fontWeight="700" clipPath={`url(#${clipId}-driver)`} textLength={driver.truncated ? 278 : undefined} lengthAdjust={driver.truncated ? "spacingAndGlyphs" : undefined}>{driver.lines[0]}</text>
           {hasPaperFieldContinuation ? (
-            <text data-paper-continuation x="466" y="143" textAnchor="end" fontSize="4.6" fontWeight="700">… full value on supplemental page</text>
+            <text data-paper-continuation x="466" y="143" textAnchor="end" fontSize="4.6" fontWeight="700">… full value in on-screen details</text>
           ) : null}
 
           <text x="478" y="195" textAnchor="middle" fontSize="8" fontWeight="700">{totals.off_duty.toFixed(2)}</text>
@@ -215,7 +214,7 @@ export function DailyLogSheet({ log, metadata = {} }: DailyLogSheetProps) {
             ))}
             {hasContinuation ? (
               <text x="105" y={292 + (paperRemarkLimit - 1) * 13} fontSize="5.8" fontWeight="700">
-                See supplemental details page for {log.remarks.length - paperRemarks.length} more changes.
+                See on-screen remarks for {log.remarks.length - paperRemarks.length} more changes.
               </text>
             ) : null}
           </g>
@@ -232,16 +231,28 @@ export function DailyLogSheet({ log, metadata = {} }: DailyLogSheetProps) {
           >
             {shippingDocument.lines[0]}
           </text>
-          <text x="86" y="451" textAnchor="middle" fontSize="8" fontWeight="700">{onDutyToday.toFixed(2)}</text>
-          <text x="171" y="451" textAnchor="middle" fontSize="8" fontWeight="700">{cycleUsedAtEnd.toFixed(2)}</text>
-          <text x="213" y="451" textAnchor="middle" fontSize="8" fontWeight="700">{remainingCycleHours.toFixed(2)}</text>
+          <text data-paper-recap="on-duty-today" x="86" y="451" textAnchor="middle" fontSize="8" fontWeight="700">{onDutyToday.toFixed(2)}</text>
+          {unsupportedRecapFieldXs.map((x, index) => (
+            <text
+              data-paper-recap="unsupported"
+              key={`unsupported-recap-${index}`}
+              x={x}
+              y="451"
+              textAnchor="middle"
+              fontSize="7"
+              fontWeight="600"
+              fill="#64748b"
+            >
+              —
+            </text>
+          ))}
         </g>
         <LogTrace log={log} />
       </svg>
       <figcaption id={captionId} className="sr-only">
-        Driver log for {log.date}: {totals.driving} hours driving, {totals.on_duty} hours on duty,
+        Driver log for {log.date}: {totals.driving} hours driving, {totals.on_duty} hours on duty,{" "}
         {totals.off_duty} hours off duty, and {totals.sleeper_berth} hours in the sleeper berth.
       </figcaption>
     </figure>
   );
-}
+});

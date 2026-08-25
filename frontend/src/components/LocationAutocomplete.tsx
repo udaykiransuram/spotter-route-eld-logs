@@ -1,7 +1,12 @@
-import { Check, ChevronDown, LoaderCircle, MapPin, Search, X } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
-import { suggestLocations } from "../api/client";
+import Autocomplete from "@mui/material/Autocomplete";
+import CircularProgress from "@mui/material/CircularProgress";
+import InputAdornment from "@mui/material/InputAdornment";
+import TextField from "@mui/material/TextField";
+import { Check, ChevronDown, MapPin, Search, X } from "lucide-react";
+import { memo, useEffect, useId, useState } from "react";
+import { ApiError, suggestLocations } from "../api/client";
 import type { LocationValue } from "../types";
+import { locationFieldSx } from "./form-control-styles";
 
 interface LocationAutocompleteProps {
   label: string;
@@ -12,7 +17,9 @@ interface LocationAutocompleteProps {
   placeholder?: string;
 }
 
-export function LocationAutocomplete({
+const keepProviderOrder = (availableOptions: LocationValue[]) => availableOptions;
+
+export const LocationAutocomplete = memo(function LocationAutocomplete({
   label,
   name,
   value,
@@ -21,14 +28,12 @@ export function LocationAutocomplete({
   placeholder = "City, state, or address",
 }: LocationAutocompleteProps) {
   const inputId = useId();
-  const listboxId = `${inputId}-options`;
+  const errorId = `${inputId}-error`;
   const [query, setQuery] = useState(value?.label ?? "");
   const [options, setOptions] = useState<LocationValue[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-  const [activeIndex, setActiveIndex] = useState(-1);
-  const blurTimer = useRef<number | null>(null);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -38,17 +43,20 @@ export function LocationAutocomplete({
     const timer = window.setTimeout(async () => {
       setLoading(true);
       setMessage("");
+      setOpen(true);
       try {
         const suggestions = await suggestLocations(trimmed, controller.signal);
         setOptions(suggestions);
-        setOpen(true);
-        setActiveIndex(suggestions.length > 0 ? 0 : -1);
         setMessage(suggestions.length === 0 ? "No matching locations found." : "");
       } catch (requestError) {
         if ((requestError as Error).name !== "AbortError") {
           setOptions([]);
           setOpen(true);
-          setMessage("Location search is unavailable. Try again in a moment.");
+          setMessage(
+            requestError instanceof ApiError
+              ? requestError.message
+              : "Location search is unavailable. Try again in a moment.",
+          );
         }
       } finally {
         if (!controller.signal.aborted) setLoading(false);
@@ -61,117 +69,167 @@ export function LocationAutocomplete({
     };
   }, [query, value?.label]);
 
-  const selectOption = (option: LocationValue) => {
-    if (blurTimer.current) window.clearTimeout(blurTimer.current);
-    setQuery(option.label);
-    onChange(option);
-    setOptions([]);
-    setOpen(false);
-    setMessage("");
-    setActiveIndex(-1);
-  };
-
-  const clear = () => {
+  const resetSearch = () => {
     setQuery("");
     setOptions([]);
     setOpen(false);
+    setLoading(false);
+    setMessage("");
     onChange(null);
   };
 
+  const hasPopupContent = loading || options.length > 0 || Boolean(message);
+
   return (
-    <div className={`field ${error ? "field--error" : ""}`}>
-      <label htmlFor={inputId}>{label}</label>
-      <div className="combobox-wrap">
-        <Search className="field-icon" size={17} aria-hidden="true" />
-        <input
-          id={inputId}
-          name={name}
-          type="text"
-          role="combobox"
-          aria-autocomplete="list"
-          aria-controls={listboxId}
-          aria-expanded={open}
-          aria-activedescendant={activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined}
-          aria-invalid={Boolean(error)}
-          aria-describedby={error ? `${inputId}-error` : undefined}
-          value={query}
+    <Autocomplete<LocationValue, false, false, false>
+      id={inputId}
+      className={`field ${error ? "field--error" : ""}`}
+      autoHighlight
+      clearOnBlur={false}
+      clearIcon={<X size={15} aria-hidden="true" />}
+      clearText={`Clear ${label.toLowerCase()}`}
+      filterOptions={keepProviderOrder}
+      forcePopupIcon
+      fullWidth
+      getOptionKey={(option) => option.id ?? `${option.label}-${option.lat}-${option.lon}`}
+      getOptionLabel={(option) => option.label}
+      isOptionEqualToValue={(option, selectedValue) => (
+        option.id && selectedValue.id
+          ? option.id === selectedValue.id
+          : option.label === selectedValue.label && option.lat === selectedValue.lat && option.lon === selectedValue.lon
+      )}
+      loading={loading}
+      loadingText="Searching locations…"
+      noOptionsText={message || "Type at least 3 characters to search."}
+      onChange={(_event, nextValue, reason) => {
+        if (reason === "clear" || !nextValue) {
+          resetSearch();
+          return;
+        }
+        setQuery(nextValue.label);
+        setOptions([]);
+        setOpen(false);
+        setMessage("");
+        onChange(nextValue);
+      }}
+      onClose={() => setOpen(false)}
+      onInputChange={(_event, nextQuery, reason) => {
+        if (reason === "clear") {
+          resetSearch();
+          return;
+        }
+        if (reason !== "input") {
+          if (reason === "selectOption" || reason === "reset") setQuery(nextQuery);
+          return;
+        }
+
+        setQuery(nextQuery);
+        onChange(null);
+        setMessage("");
+        if (nextQuery.trim().length < 3) {
+          setOptions([]);
+          setLoading(false);
+          setOpen(false);
+        } else {
+          setOpen(true);
+        }
+      }}
+      onOpen={() => {
+        if (hasPopupContent) setOpen(true);
+      }}
+      open={open && hasPopupContent}
+      openText={`Open ${label.toLowerCase()} suggestions`}
+      options={options}
+      popupIcon={<ChevronDown size={15} aria-hidden="true" />}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          className="combobox-wrap"
+          error={Boolean(error)}
+          helperText={error}
+          label={label}
           placeholder={placeholder}
-          autoComplete="off"
-          onFocus={() => {
-            if (options.length > 0 || message) setOpen(true);
-          }}
-          onBlur={() => {
-            blurTimer.current = window.setTimeout(() => setOpen(false), 120);
-          }}
-          onChange={(event) => {
-            const nextQuery = event.target.value;
-            setQuery(nextQuery);
-            onChange(null);
-            if (nextQuery.trim().length < 3) {
-              setOptions([]);
-              setLoading(false);
-              setMessage("");
-              setActiveIndex(-1);
-              setOpen(false);
-            } else {
-              setOpen(true);
-            }
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowDown" && options.length > 0) {
-              event.preventDefault();
-              setOpen(true);
-              setActiveIndex((index) => (index + 1) % options.length);
-            } else if (event.key === "ArrowUp" && options.length > 0) {
-              event.preventDefault();
-              setOpen(true);
-              setActiveIndex((index) => (index <= 0 ? options.length - 1 : index - 1));
-            } else if (event.key === "Enter" && open && activeIndex >= 0) {
-              event.preventDefault();
-              selectOption(options[activeIndex]);
-            } else if (event.key === "Escape") {
-              setOpen(false);
-            }
+          size="small"
+          sx={locationFieldSx}
+          slotProps={{
+            ...params.slotProps,
+            input: {
+              ...params.slotProps.input,
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Search size={17} aria-hidden="true" />
+                </InputAdornment>
+              ),
+              endAdornment: (
+                <>
+                  {loading ? <CircularProgress aria-label="Searching locations" color="inherit" size={16} /> : null}
+                  {params.slotProps.input.endAdornment}
+                </>
+              ),
+            },
+            inputLabel: {
+              ...params.slotProps.inputLabel,
+              shrink: true,
+            },
+            htmlInput: {
+              ...params.slotProps.htmlInput,
+              name,
+              autoComplete: "off",
+              "aria-describedby": error ? errorId : undefined,
+            },
+            formHelperText: {
+              id: errorId,
+              role: error ? "alert" : undefined,
+            },
           }}
         />
-        <span className="combobox-actions">
-          {loading ? <LoaderCircle className="spin" size={16} aria-label="Searching locations" /> : null}
-          {query ? (
-            <button type="button" className="icon-button icon-button--small" onClick={clear} aria-label={`Clear ${label.toLowerCase()}`}>
-              <X size={15} />
-            </button>
-          ) : (
-            <ChevronDown size={15} aria-hidden="true" />
-          )}
-        </span>
-        {open ? (
-          <div className="location-menu" id={listboxId} role="listbox" aria-label={`${label} suggestions`}>
-            {options.map((option, index) => (
-              <button
-                id={`${listboxId}-${index}`}
-                key={`${option.id ?? `${option.label}-${option.lat}-${option.lon}`}-${index}`}
-                type="button"
-                role="option"
-                aria-selected={value?.id === option.id}
-                className={`location-option ${index === activeIndex ? "location-option--active" : ""}`}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => selectOption(option)}
-              >
-                <MapPin size={17} aria-hidden="true" />
-                <span>
-                  <strong>{option.label}</strong>
-                  {option.city || option.state ? (
-                    <small>{[option.city, option.state, option.country].filter(Boolean).join(", ")}</small>
-                  ) : null}
-                </span>
-                {value?.id && value.id === option.id ? <Check size={16} aria-hidden="true" /> : null}
-              </button>
-            ))}
-            {message ? <p className="location-menu__message" role="status">{message}</p> : null}
-          </div>
-        ) : null}
-      </div>
-      {error ? <p className="field-error" id={`${inputId}-error`} role="alert">{error}</p> : null}
-    </div>
+      )}
+      renderOption={(optionProps, option) => {
+        const { key, className, ...restOptionProps } = optionProps;
+        const secondaryLabel = [option.city, option.state, option.country].filter(Boolean).join(", ");
+        return (
+          <li
+            {...restOptionProps}
+            className={`${className ?? ""} location-option`}
+            key={key}
+          >
+            <MapPin size={17} aria-hidden="true" />
+            <span>
+              <strong>{option.label}</strong>
+              {secondaryLabel ? <small>{secondaryLabel}</small> : null}
+            </span>
+            {value && (
+              value.id && option.id
+                ? value.id === option.id
+                : value.label === option.label && value.lat === option.lat && value.lon === option.lon
+            ) ? <Check size={16} aria-hidden="true" /> : null}
+          </li>
+        );
+      }}
+      slotProps={{
+        listbox: {
+          "aria-label": `${label} suggestions`,
+          sx: {
+            maxHeight: "280px",
+            padding: "5px",
+            "& .location-option": {
+              display: "grid",
+              gridTemplateColumns: "20px minmax(0, 1fr) 18px",
+            },
+          },
+        },
+        paper: {
+          className: "location-menu",
+          elevation: 8,
+          style: {
+            position: "static",
+            maxHeight: "none",
+            overflow: "hidden",
+            padding: 0,
+          },
+        },
+      }}
+      value={value}
+    />
   );
-}
+});

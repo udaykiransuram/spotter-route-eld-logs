@@ -1,8 +1,15 @@
-import { ChevronDown, Clock3, LoaderCircle } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import Alert from "@mui/material/Alert";
+import Button from "@mui/material/Button";
+import CircularProgress from "@mui/material/CircularProgress";
+import InputAdornment from "@mui/material/InputAdornment";
+import TextField from "@mui/material/TextField";
+import { Clock3 } from "lucide-react";
+import { type FormEvent, memo, useCallback, useState } from "react";
 import { localInputToIso } from "../lib/format";
 import type { LocationValue, TripMetadata, TripPlanRequest } from "../types";
+import { formFieldSx } from "./form-control-styles";
 import { LocationAutocomplete } from "./LocationAutocomplete";
+import { TripLogSettings } from "./TripLogSettings";
 
 const defaultLocations = {
   current: {
@@ -38,6 +45,8 @@ interface TripFormProps {
   onGenerate: (request: TripPlanRequest) => Promise<void>;
   loading: boolean;
   apiError?: string;
+  initialRequest?: TripPlanRequest;
+  onPrepareResults?: () => void;
 }
 
 interface FieldErrors {
@@ -47,23 +56,59 @@ interface FieldErrors {
   cycle?: string;
 }
 
-export function TripForm({ onGenerate, loading, apiError }: TripFormProps) {
-  const [current, setCurrent] = useState<LocationValue | null>(defaultLocations.current);
-  const [pickup, setPickup] = useState<LocationValue | null>(defaultLocations.pickup);
-  const [dropoff, setDropoff] = useState<LocationValue | null>(defaultLocations.dropoff);
-  const [cycleUsed, setCycleUsed] = useState("30");
-  const [departureAt, setDepartureAt] = useState("");
-  const [timezone, setTimezone] = useState("");
-  const [metadata, setMetadata] = useState<TripMetadata>({});
+export const TripForm = memo(function TripForm({
+  onGenerate,
+  loading,
+  apiError,
+  initialRequest,
+  onPrepareResults,
+}: TripFormProps) {
+  const [current, setCurrent] = useState<LocationValue | null>(
+    initialRequest?.current_location ?? defaultLocations.current,
+  );
+  const [pickup, setPickup] = useState<LocationValue | null>(
+    initialRequest?.pickup_location ?? defaultLocations.pickup,
+  );
+  const [dropoff, setDropoff] = useState<LocationValue | null>(
+    initialRequest?.dropoff_location ?? defaultLocations.dropoff,
+  );
+  const [cycleUsed, setCycleUsed] = useState(
+    String(initialRequest?.current_cycle_used_hours ?? 30),
+  );
+  const [departureAt, setDepartureAt] = useState(initialRequest?.departure_at ?? "");
+  const [timezone, setTimezone] = useState(initialRequest?.home_terminal_timezone ?? "");
+  const [metadata, setMetadata] = useState<TripMetadata>(initialRequest?.metadata ?? {});
   const [errors, setErrors] = useState<FieldErrors>({});
 
-  const updateMetadata = (key: keyof TripMetadata, value: string) => {
+  const clearFieldError = useCallback((field: keyof FieldErrors) => {
+    setErrors((previous) => previous[field]
+      ? { ...previous, [field]: undefined }
+      : previous);
+  }, []);
+
+  const updateMetadata = useCallback((key: keyof TripMetadata, value: string) => {
     setMetadata((previous) => ({ ...previous, [key]: value }));
-  };
+  }, []);
+
+  const updateCurrent = useCallback((value: LocationValue | null) => {
+    setCurrent(value);
+    clearFieldError("current");
+  }, [clearFieldError]);
+
+  const updatePickup = useCallback((value: LocationValue | null) => {
+    setPickup(value);
+    clearFieldError("pickup");
+  }, [clearFieldError]);
+
+  const updateDropoff = useCallback((value: LocationValue | null) => {
+    setDropoff(value);
+    clearFieldError("dropoff");
+  }, [clearFieldError]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (loading) return;
+    onPrepareResults?.();
 
     const nextErrors: FieldErrors = {};
     if (!current) nextErrors.current = "Select a current location from the suggestions.";
@@ -94,115 +139,123 @@ export function TripForm({ onGenerate, loading, apiError }: TripFormProps) {
   };
 
   return (
-    <aside className="planner-sidebar" aria-labelledby="trip-form-title">
+    <section className="planner-sidebar" aria-labelledby="trip-form-title">
       <div className="planner-sidebar__intro">
         <h1 id="trip-form-title">Enter trip details</h1>
         <p>Enter trip details to get a compliant route, recommended stops, and daily log sheets.</p>
       </div>
 
       <form onSubmit={handleSubmit} noValidate aria-busy={loading}>
+        <fieldset className="trip-form-fields" disabled={loading}>
         <LocationAutocomplete
           label="Current location"
           name="current_location"
           value={current}
-          onChange={(value) => {
-            setCurrent(value);
-            setErrors((previous) => ({ ...previous, current: undefined }));
-          }}
+          onChange={updateCurrent}
           error={errors.current}
         />
         <LocationAutocomplete
           label="Pickup location"
           name="pickup_location"
           value={pickup}
-          onChange={(value) => {
-            setPickup(value);
-            setErrors((previous) => ({ ...previous, pickup: undefined }));
-          }}
+          onChange={updatePickup}
           error={errors.pickup}
         />
         <LocationAutocomplete
           label="Drop-off location"
           name="dropoff_location"
           value={dropoff}
-          onChange={(value) => {
-            setDropoff(value);
-            setErrors((previous) => ({ ...previous, dropoff: undefined }));
-          }}
+          onChange={updateDropoff}
           error={errors.dropoff}
         />
 
-        <div className={`field ${errors.cycle ? "field--error" : ""}`}>
-          <label htmlFor="cycle-used">Current cycle used (hours)</label>
-          <div className="input-with-icon">
-            <Clock3 className="field-icon" size={17} aria-hidden="true" />
-            <input
-              id="cycle-used"
-              name="current_cycle_used_hours"
-              type="number"
-              min="0"
-              max="70"
-              step="0.25"
-              inputMode="decimal"
-              value={cycleUsed}
-              aria-invalid={Boolean(errors.cycle)}
-              aria-describedby={errors.cycle ? "cycle-used-error" : undefined}
-              onChange={(event) => {
-                setCycleUsed(event.target.value);
-                setErrors((previous) => ({ ...previous, cycle: undefined }));
-              }}
-            />
-          </div>
-          {errors.cycle ? <p className="field-error" id="cycle-used-error" role="alert">{errors.cycle}</p> : null}
-        </div>
+        <TextField
+          className={`field ${errors.cycle ? "field--error" : ""}`}
+          error={Boolean(errors.cycle)}
+          fullWidth
+          helperText={errors.cycle ?? "Driving and on-duty hours already worked in the current 70-hour/8-day cycle."}
+          id="cycle-used"
+          label="Current cycle used (hours)"
+          name="current_cycle_used_hours"
+          onChange={(event) => {
+            setCycleUsed(event.target.value);
+            clearFieldError("cycle");
+          }}
+          size="small"
+          slotProps={{
+            input: {
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Clock3 size={17} aria-hidden="true" />
+                </InputAdornment>
+              ),
+            },
+            inputLabel: { shrink: true },
+            htmlInput: {
+              min: 0,
+              max: 70,
+              step: 0.25,
+              inputMode: "decimal",
+              "aria-describedby": "cycle-used-help",
+            },
+            formHelperText: {
+              id: "cycle-used-help",
+              role: errors.cycle ? "alert" : undefined,
+            },
+          }}
+          sx={formFieldSx}
+          type="number"
+          value={cycleUsed}
+        />
 
-        <details className="settings-panel">
-          <summary>
-            <span>Trip & log settings</span>
-            <ChevronDown size={18} aria-hidden="true" />
-          </summary>
-          <div className="settings-panel__content">
-            <div className="field">
-              <label htmlFor="departure-at">Departure</label>
-              <input
-                id="departure-at"
-                name="departure_at"
-                type="datetime-local"
-                value={departureAt}
-                aria-describedby="departure-at-help"
-                onChange={(event) => setDepartureAt(event.target.value)}
-              />
-              <p className="field-help" id="departure-at-help">Leave blank to start at the current time.</p>
-            </div>
-            <div className="field">
-              <label htmlFor="home-timezone">Home-terminal timezone</label>
-              <input
-                id="home-timezone"
-                name="home_terminal_timezone"
-                value={timezone}
-                maxLength={80}
-                placeholder="Auto-detect from current location"
-                aria-describedby="home-timezone-help"
-                onChange={(event) => setTimezone(event.target.value)}
-              />
-              <p className="field-help" id="home-timezone-help">Leave blank to use the current location's timezone.</p>
-            </div>
-            <div className="settings-grid">
-              <div className="field"><label htmlFor="driver-name">Driver</label><input id="driver-name" maxLength={120} value={metadata.driver_name ?? ""} onChange={(event) => updateMetadata("driver_name", event.target.value)} /></div>
-              <div className="field"><label htmlFor="carrier-name">Carrier</label><input id="carrier-name" maxLength={160} value={metadata.carrier_name ?? ""} onChange={(event) => updateMetadata("carrier_name", event.target.value)} /></div>
-              <div className="field settings-grid__wide"><label htmlFor="main-office-address">Main office address</label><input id="main-office-address" maxLength={200} value={metadata.main_office_address ?? ""} onChange={(event) => updateMetadata("main_office_address", event.target.value)} /></div>
-              <div className="field settings-grid__wide"><label htmlFor="home-terminal-address">Home terminal address</label><input id="home-terminal-address" maxLength={200} value={metadata.home_terminal_address ?? ""} onChange={(event) => updateMetadata("home_terminal_address", event.target.value)} /></div>
-              <div className="field"><label htmlFor="vehicle-number">Vehicle number</label><input id="vehicle-number" maxLength={80} value={metadata.vehicle_number ?? ""} onChange={(event) => updateMetadata("vehicle_number", event.target.value)} /></div>
-              <div className="field"><label htmlFor="shipping-document">Shipping document</label><input id="shipping-document" maxLength={100} value={metadata.shipping_document_number ?? ""} onChange={(event) => updateMetadata("shipping_document_number", event.target.value)} /></div>
-            </div>
-          </div>
-        </details>
+        <TripLogSettings
+          departureAt={departureAt}
+          metadata={metadata}
+          onDepartureChange={setDepartureAt}
+          onMetadataChange={updateMetadata}
+          onTimezoneChange={setTimezone}
+          timezone={timezone}
+        />
 
-        <button className="primary-button planner-submit" type="submit" disabled={loading}>
-          {loading ? <><LoaderCircle className="spin" size={18} /> Generating route…</> : "Generate route & logs"}
-        </button>
-        {apiError ? <div className="form-alert" role="alert">{apiError}</div> : null}
+        <Button
+          className="primary-button planner-submit"
+          disableElevation
+          disabled={loading}
+          fullWidth
+          onFocus={onPrepareResults}
+          onMouseEnter={onPrepareResults}
+          startIcon={loading ? <CircularProgress aria-hidden="true" color="inherit" size={18} /> : undefined}
+          sx={{
+            minHeight: "42px",
+            borderRadius: "var(--radius-control)",
+            backgroundColor: "var(--teal-950)",
+            fontFamily: "var(--font-ui)",
+            fontSize: "14px",
+            fontWeight: 700,
+            textTransform: "none",
+            "&:hover": { backgroundColor: "#00566a" },
+          }}
+          type="submit"
+          variant="contained"
+        >
+          {loading ? "Generating route…" : "Generate route & logs"}
+        </Button>
+        </fieldset>
+        {apiError ? (
+          <Alert
+            className="form-alert"
+            severity="error"
+            sx={{
+              alignItems: "center",
+              fontFamily: "var(--font-ui)",
+              "& .MuiAlert-message": { padding: 0 },
+            }}
+            variant="outlined"
+          >
+            {apiError}
+          </Alert>
+        ) : null}
       </form>
-    </aside>
+    </section>
   );
-}
+});

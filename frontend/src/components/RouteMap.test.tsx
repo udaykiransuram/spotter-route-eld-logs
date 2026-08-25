@@ -57,9 +57,30 @@ describe("route map resource health", () => {
 });
 
 describe("map fallback", () => {
+  it("keeps the loading state accessible while the route map initializes", () => {
+    render(<MapFallback />);
+
+    expect(screen.getByRole("status")).toHaveClass("map-fallback--loading");
+    expect(screen.getByRole("status")).toHaveTextContent("Loading route map…");
+  });
+
+  it("shows a richer preview of what the generated route will contain", () => {
+    const { container } = render(<MapFallback loading={false} />);
+
+    const fallback = screen.getByRole("group", { name: "Generated route preview" });
+    expect(fallback).toHaveClass("map-fallback--empty");
+    expect(screen.getByText("Your generated route will appear here.").tagName).toBe("STRONG");
+    expect(fallback).toHaveTextContent(
+      "After you generate, this area will show your route, recommended stops, and daily log summaries.",
+    );
+    expect(container.querySelector(".map-fallback__motif")).toBeInTheDocument();
+    expect(container.querySelector(".map-fallback__icon")).toBeInTheDocument();
+  });
+
   it("explains that the rest of the trip remains usable after a map failure", () => {
     render(<MapFallback error="WebGL is unavailable." />);
 
+    expect(screen.getByRole("alert")).toHaveClass("map-fallback--error");
     expect(screen.getByRole("alert")).toHaveTextContent("Route map unavailable");
     expect(screen.getByRole("alert")).toHaveTextContent("WebGL is unavailable");
     expect(screen.getByRole("alert")).toHaveTextContent("itinerary, stop details, and daily logs are still available");

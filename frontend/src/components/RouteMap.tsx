@@ -35,9 +35,55 @@ type MapStatus =
   | { planId: string; state: "ready" }
   | { planId: string; state: "error"; message: string };
 
-const MAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
+const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
 const MAP_STYLE_TIMEOUT_MS = 15_000;
 const POST_LOAD_RESOURCE_ERROR_LIMIT = 4;
+
+function applyCalmMapPalette(map: MapLibreMap) {
+  const setPaint = (layerId: string, property: string, value: string | number) => {
+    if (map.getLayer(layerId)) map.setPaintProperty(layerId, property, value);
+  };
+
+  setPaint("background", "background-color", "#f8f7f3");
+  setPaint("natural_earth", "raster-opacity", 0.2);
+  setPaint("natural_earth", "raster-saturation", -0.7);
+  setPaint("natural_earth", "raster-contrast", -0.12);
+  setPaint("water", "fill-color", "#d9eaf4");
+  setPaint("park", "fill-color", "#dfeadd");
+  setPaint("park", "fill-opacity", 0.58);
+  setPaint("park", "fill-outline-color", "#c7d8c4");
+  setPaint("park_outline", "line-color", "#c7d8c4");
+  setPaint("landcover_wood", "fill-color", "#dce8d7");
+  setPaint("landcover_wood", "fill-opacity", 0.28);
+  setPaint("landcover_grass", "fill-color", "#e5ecdc");
+  setPaint("landcover_grass", "fill-opacity", 0.24);
+  setPaint("landuse_residential", "fill-color", "#f0efec");
+
+  for (const layer of map.getStyle().layers) {
+    const sourceLayer = "source-layer" in layer ? layer["source-layer"] : undefined;
+    if (layer.type === "line" && sourceLayer === "waterway") {
+      map.setPaintProperty(layer.id, "line-color", "#b5d2e2");
+    }
+    if (layer.type === "line" && sourceLayer === "transportation") {
+      const color = layer.id.includes("rail")
+        ? "#c5cdd2"
+        : layer.id.includes("casing")
+          ? "#d3d9dd"
+          : "#ffffff";
+      map.setPaintProperty(layer.id, "line-color", color);
+      if (layer.id.includes("rail")) map.setPaintProperty(layer.id, "line-opacity", 0.58);
+    }
+    if (layer.type === "symbol" && sourceLayer === "place") {
+      map.setPaintProperty(layer.id, "text-color", "#1c3550");
+      map.setPaintProperty(layer.id, "text-halo-color", "#fffefa");
+      map.setPaintProperty(layer.id, "text-halo-width", 1.2);
+    }
+    if (layer.type === "symbol" && sourceLayer === "transportation_name") {
+      map.setPaintProperty(layer.id, "text-color", "#526a7d");
+      map.setPaintProperty(layer.id, "text-halo-color", "#fffefa");
+    }
+  }
+}
 
 function webGlIsAvailable() {
   return typeof WebGLRenderingContext !== "undefined"
@@ -144,14 +190,17 @@ export default function RouteMap({ plan, selectedStopId, onSelectStop }: RouteMa
     for (const coordinate of routeCoordinates) bounds.extend(coordinate);
 
     try {
+      const mapPadding = container.clientWidth < 640 ? 36 : 56;
       map = new maplibregl.Map({
         container,
         style: MAP_STYLE,
         bounds,
-        fitBoundsOptions: { padding: 58 },
+        fitBoundsOptions: { padding: mapPadding, maxZoom: 12 },
         attributionControl: false,
       });
       mapRef.current = map;
+      map.dragRotate.disable();
+      map.touchZoomRotate.disableRotation();
 
       resizeObserver = new ResizeObserver(() => {
         map?.resize();
@@ -175,19 +224,24 @@ export default function RouteMap({ plan, selectedStopId, onSelectStop }: RouteMa
       map.on("load", () => {
         if (!map || destroyed) return;
         try {
+          applyCalmMapPalette(map);
+          const firstSymbolLayerId = map.getStyle().layers
+            .find((layer) => layer.type === "symbol")?.id;
           map.addSource("trip-route", { type: "geojson", data: plan.route });
           map.addLayer({
             id: "trip-route-shadow",
             type: "line",
             source: "trip-route",
-            paint: { "line-color": "#ffffff", "line-width": 8, "line-opacity": 0.92 },
-          });
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: { "line-color": "#ffffff", "line-width": 9, "line-opacity": 0.94 },
+          }, firstSymbolLayerId);
           map.addLayer({
             id: "trip-route-line",
             type: "line",
             source: "trip-route",
-            paint: { "line-color": "#087a82", "line-width": 4.5 },
-          });
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: { "line-color": "#006d77", "line-width": 5 },
+          }, firstSymbolLayerId);
           styleReady = true;
           if (styleTimeout !== null) window.clearTimeout(styleTimeout);
           setMapStatus({ planId: plan.id, state: "ready" });
@@ -216,6 +270,7 @@ export default function RouteMap({ plan, selectedStopId, onSelectStop }: RouteMa
         element.type = "button";
         element.textContent = String(stop.sequence);
         element.setAttribute("aria-label", `${stop.sequence}. ${stop.label}: ${stop.reason}`);
+        element.setAttribute("aria-pressed", "false");
         const handleClick = () => selectRef.current(stop.id);
         element.addEventListener("click", handleClick);
         root.append(element);
@@ -250,7 +305,9 @@ export default function RouteMap({ plan, selectedStopId, onSelectStop }: RouteMa
 
   useEffect(() => {
     for (const [id, { element }] of markersRef.current) {
-      element.classList.toggle("map-marker--selected", id === selectedStopId);
+      const selected = id === selectedStopId;
+      element.classList.toggle("map-marker--selected", selected);
+      element.setAttribute("aria-pressed", String(selected));
     }
     const selected = selectedStopId
       ? plan.stops.find((stop) => stop.id === selectedStopId)

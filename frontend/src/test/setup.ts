@@ -23,6 +23,17 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
+Object.defineProperties(window.URL, {
+  createObjectURL: {
+    configurable: true,
+    value: vi.fn(() => "blob:test-worker"),
+  },
+  revokeObjectURL: {
+    configurable: true,
+    value: vi.fn(),
+  },
+});
+
 class ResizeObserverStub {
   observe() {}
   unobserve() {}

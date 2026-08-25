@@ -13,12 +13,15 @@ from trips.service import TripPlannerService
 
 class HealthView(APIView):
     def get(self, request: object) -> Response:
+        configured = settings.USE_DEMO_PROVIDER or bool(settings.GEOAPIFY_API_KEY)
         return Response(
             {
-                "status": "ok",
+                "status": "ok" if configured else "not_configured",
                 "service": "spotter-route-eld-api",
                 "provider": "demo" if settings.USE_DEMO_PROVIDER else "geoapify",
-            }
+                "configured": configured,
+            },
+            status=200 if configured else 503,
         )
 
 

@@ -1,7 +1,4 @@
 packages:
   - frontend
-onlyBuiltDependencies:
-  - esbuild
-confirmModulesPurge: false
 allowBuilds:
   esbuild: true

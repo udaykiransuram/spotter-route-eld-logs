@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from math import isfinite
 
 from trips.domain import DutyEvent, DutyStatus, EventType, RouteLocator, RouteResult
 
@@ -43,6 +44,11 @@ def schedule_route(
 
     if departure_at.tzinfo is None:
         raise SchedulingError("departure_at must be timezone-aware")
+    if (
+        not isfinite(current_cycle_used_hours)
+        or not 0 <= current_cycle_used_hours <= CYCLE_LIMIT_HOURS
+    ):
+        raise SchedulingError("current_cycle_used_hours must be a finite number from 0 to 70")
     if len(route.legs) != 2:
         raise SchedulingError("A trip route must contain current→pickup and pickup→drop-off legs")
     if route.distance_miles <= 0 or any(
@@ -93,7 +99,10 @@ def schedule_route(
                 status="off_duty",
                 event_type="cycle_restart",
                 duration_hours=CYCLE_RESTART_HOURS,
-                note="34-hour restart required because the simplified 70-hour cycle was exhausted.",
+                note=(
+                    "34-hour restart inserted by this planner's simplified model because "
+                    "the 70-hour cycle was exhausted."
+                ),
             )
             state.cycle_used = 0.0
             state.daily_driving = 0.0
