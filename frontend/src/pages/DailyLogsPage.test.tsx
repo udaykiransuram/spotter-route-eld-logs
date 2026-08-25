@@ -19,6 +19,9 @@ describe("Daily logs page", () => {
     expect(screen.getByRole("heading", { name: "Daily logs" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Aug 25 · Day 1/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("490 mi")).toBeInTheDocument();
+    expect(screen.getByText("24.00 h")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "70-hour cycle used" })).toHaveAttribute("aria-valuenow", "39.5");
+    expect(screen.getByText("Sheet 1 of 2")).toBeInTheDocument();
     expect(screen.getByText("Generated trip plan — not a certified ELD record.")).toBeInTheDocument();
     expect(screen.getAllByText(/Off duty → Driving/).length).toBeGreaterThan(0);
 
@@ -26,6 +29,7 @@ describe("Daily logs page", () => {
     expect(screen.getByRole("tab", { name: /Aug 26 · Day 2/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("860 mi")).toBeInTheDocument();
     expect(screen.getByText("13.50 h")).toBeInTheDocument();
+    expect(screen.getByText("Sheet 2 of 2")).toBeInTheDocument();
   });
 
   it("supports previous/next navigation and printing", async () => {

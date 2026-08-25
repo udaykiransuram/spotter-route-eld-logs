@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Expand, Minimize, Printer } from "lucide-react";
+import { ChevronLeft, ChevronRight, Expand, FileText, Minimize, Printer } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { AppHeader } from "../components/AppHeader";
@@ -6,6 +6,13 @@ import { DailyLogSheet } from "../components/DailyLogSheet";
 import { DailySummary } from "../components/DailySummary";
 import { dutyStatusLabels, formatDayLabel } from "../lib/format";
 import { usePlan } from "../state/plan-store";
+
+const longDateFormatter = new Intl.DateTimeFormat("en-US", {
+  weekday: "long",
+  month: "long",
+  day: "numeric",
+  year: "numeric",
+});
 
 export function DailyLogsPage() {
   const { plan } = usePlan();
@@ -25,6 +32,7 @@ export function DailyLogsPage() {
   const pickup = plan.request?.pickup_location.label;
   const destination = plan.request?.dropoff_location.label ?? plan.daily_logs.at(-1)?.to_location;
   const routeLabel = [origin, pickup, destination].filter(Boolean).join(" → ");
+  const activeDate = longDateFormatter.format(new Date(`${activeLog.date}T12:00:00`));
 
   const requestFullscreen = async () => {
     if (document.fullscreenElement) {
@@ -96,15 +104,38 @@ export function DailyLogsPage() {
           aria-labelledby={`day-tab-${activeIndex}`}
         >
           <div className="log-stage__paper">
-            <DailyLogSheet log={activeLog} metadata={plan.request?.metadata} />
+            <div className="log-document-bar">
+              <div className="log-document-bar__title">
+                <span className="log-document-icon" aria-hidden="true"><FileText size={19} /></span>
+                <div>
+                  <strong>Driver's daily log</strong>
+                  <span>{activeDate} · {activeLog.timezone.replaceAll("_", " ")}</span>
+                </div>
+              </div>
+              <span className="log-sheet-count">Sheet {activeIndex + 1} of {plan.daily_logs.length}</span>
+            </div>
+            <div className="log-paper-canvas">
+              <DailyLogSheet log={activeLog} metadata={plan.request?.metadata} />
+            </div>
             <section className="remarks-list" aria-labelledby="remarks-title">
-              <h2 id="remarks-title">Remarks</h2>
+              <header className="remarks-list__header">
+                <div>
+                  <h2 id="remarks-title">Duty-status remarks</h2>
+                  <p>Times shown in {activeLog.timezone.replaceAll("_", " ")}.</p>
+                </div>
+                <span>{activeLog.remarks.length} {activeLog.remarks.length === 1 ? "change" : "changes"}</span>
+              </header>
               {activeLog.remarks.length > 0 ? (
                 <ol>
                   {activeLog.remarks.map((remark, index) => (
-                    <li key={`${remark.time}-${index}`}>
+                    <li className={`remark-item remark-item--${remark.status}`} key={`${remark.time}-${index}`}>
+                      <span className="remark-item__marker" aria-hidden="true" />
                       <time>{remark.time}</time>
-                      <span><strong>{dutyStatusLabels[remark.status]}</strong>{remark.note} · {remark.location}</span>
+                      <div>
+                        <strong>{dutyStatusLabels[remark.status]}</strong>
+                        <p>{remark.note}</p>
+                        {remark.location ? <span>{remark.location}</span> : null}
+                      </div>
                     </li>
                   ))}
                 </ol>

@@ -65,8 +65,8 @@ export function DailyLogSheet({ log, metadata = {} }: DailyLogSheetProps) {
           <text x="235" y="20" textAnchor="middle" fontSize="8" fontWeight="700">{day}</text>
           <text x="279" y="20" textAnchor="middle" fontSize="8" fontWeight="700">{year}</text>
 
-          <text x="168" y="47" textAnchor="middle" fontSize="8" fontWeight="600">{log.from_location}</text>
-          <text x="357" y="47" textAnchor="middle" fontSize="8" fontWeight="600">{log.to_location}</text>
+          <text x="168" y="47" textAnchor="middle" fontSize="8" fontWeight="500">{log.from_location}</text>
+          <text x="357" y="47" textAnchor="middle" fontSize="8" fontWeight="500">{log.to_location}</text>
 
           <text x="94" y="79" textAnchor="middle" fontSize="10" fontWeight="700">{Math.round(log.total_miles)}</text>
           <text x="181" y="79" textAnchor="middle" fontSize="10" fontWeight="700">{Math.round(log.total_miles)}</text>
@@ -74,7 +74,6 @@ export function DailyLogSheet({ log, metadata = {} }: DailyLogSheetProps) {
 
           <text x="347" y="80" textAnchor="middle" fontSize="7" fontWeight="600">{metadata.carrier_name ?? ""}</text>
           <text x="62" y="143" fontSize="6.25" fontWeight="600">{metadata.driver_name ? `Driver: ${metadata.driver_name}` : ""}</text>
-          <text x="258" y="143" fontSize="6.25">Home-terminal TZ: {log.timezone}</text>
 
           <text x="478" y="187" textAnchor="middle" fontSize="8" fontWeight="700">{totals.off_duty.toFixed(2)}</text>
           <text x="478" y="205" textAnchor="middle" fontSize="8" fontWeight="700">{totals.sleeper_berth.toFixed(2)}</text>
