@@ -25,6 +25,7 @@ export function DailyLogsPage() {
   const [fullscreenError, setFullscreenError] = useState<string | null>(null);
   const [printReady, setPrintReady] = useState(false);
   const logRegionRef = useRef<HTMLDivElement>(null);
+  const dayTabsRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     document.documentElement.scrollTop = 0;
@@ -47,6 +48,25 @@ export function DailyLogsPage() {
       window.removeEventListener("afterprint", releasePrintSheets);
     };
   }, []);
+
+  useEffect(() => {
+    const selectedTab = dayTabsRef.current?.querySelector<HTMLElement>(`#day-tab-${activeIndex}`);
+    const scroller = dayTabsRef.current?.querySelector<HTMLElement>(".day-tabs");
+    if (!selectedTab || !scroller) return;
+
+    const selectedRect = selectedTab.getBoundingClientRect();
+    const scrollerRect = scroller.getBoundingClientRect();
+    const centeredLeft = scroller.scrollLeft
+      + selectedRect.left
+      - scrollerRect.left
+      - (scroller.clientWidth - selectedRect.width) / 2;
+    const nextLeft = Math.max(0, Math.min(centeredLeft, scroller.scrollWidth - scroller.clientWidth));
+    if (typeof scroller.scrollTo === "function") {
+      scroller.scrollTo({ left: nextLeft, behavior: "auto" });
+    } else {
+      scroller.scrollLeft = nextLeft;
+    }
+  }, [activeIndex]);
 
   if (!plan || plan.daily_logs.length === 0) return <Navigate to="/" replace />;
   const activeLog = plan.daily_logs[Math.min(activeIndex, plan.daily_logs.length - 1)];
@@ -107,20 +127,23 @@ export function DailyLogsPage() {
               {fullscreen ? "Exit full screen" : "View full screen"}
             </Button>
             <Button
-              className="secondary-button"
+              className="primary-button logs-print-button"
               color="inherit"
+              disableElevation
+              aria-describedby="print-log-scope"
               startIcon={<Printer size={18} aria-hidden="true" />}
               sx={{ "& .MuiButton-startIcon": { margin: 0 } }}
               type="button"
-              variant="outlined"
+              variant="contained"
               onClick={printLogs}
             >
               Print / Save PDF
             </Button>
+            <span className="sr-only" id="print-log-scope">Prints all {plan.daily_logs.length} daily log sheets, one sheet per page.</span>
           </div>
         </header>
 
-        <nav className="day-tabs-nav" aria-label="Daily log navigation">
+        <nav className="day-tabs-nav" aria-label="Daily log navigation" ref={dayTabsRef}>
           <IconButton className="day-arrow" type="button" disabled={activeIndex === 0} onClick={() => selectTab(activeIndex - 1)} aria-label="Previous day"><ChevronLeft /></IconButton>
           <Tabs
             value={activeIndex}
@@ -139,6 +162,8 @@ export function DailyLogsPage() {
                 id={`day-tab-${index}`}
                 key={log.date}
                 aria-controls={`day-panel-${index}`}
+                disableFocusRipple
+                disableRipple
                 label={formatDayLabel(log.date, index + 1)}
                 value={index}
                 onKeyDown={(event) => {
@@ -180,6 +205,7 @@ export function DailyLogsPage() {
               Exit full screen
             </Button>
           ) : null}
+          <DailySummary log={activeLog} dayNumber={activeIndex + 1} />
           <Paper className="log-stage__paper" elevation={0}>
             <div className="log-document-bar">
               <div className="log-document-bar__title">
@@ -212,7 +238,7 @@ export function DailyLogsPage() {
                   <h2 id="remarks-title">Duty-status remarks</h2>
                   <p>Times shown in {activeLog.timezone.replaceAll("_", " ")}.</p>
                 </div>
-                <span>{activeLog.remarks.length} {activeLog.remarks.length === 1 ? "change" : "changes"}</span>
+                <span>{activeLog.remarks.length} {activeLog.remarks.length === 1 ? "entry" : "entries"}</span>
               </header>
               {activeLog.grid_note ? (
                 <div className="log-grid-note" role="note" aria-label="Daylight-saving time-grid note">
@@ -227,9 +253,11 @@ export function DailyLogsPage() {
                       <span className="remark-item__marker" aria-hidden="true" />
                       <time>{remarkDisplayTime(remark)}</time>
                       <div>
-                        <strong>{dutyStatusLabels[remark.status]}</strong>
+                        <strong>
+                          {remark.location || "Location unavailable"} — {remark.activity || dutyStatusLabels[remark.status]}
+                        </strong>
                         <p>{remark.note}</p>
-                        {remark.location ? <span>{remark.location}</span> : null}
+                        <span>{dutyStatusLabels[remark.status]}</span>
                       </div>
                     </li>
                   ))}
@@ -237,7 +265,6 @@ export function DailyLogsPage() {
               ) : <p>No duty-status changes recorded.</p>}
             </section>
           </Paper>
-          <DailySummary log={activeLog} dayNumber={activeIndex + 1} />
         </div>
         {printReady ? (
           <div className="print-all-logs" aria-hidden="true">

@@ -3,8 +3,8 @@ import Button from "@mui/material/Button";
 import CircularProgress from "@mui/material/CircularProgress";
 import InputAdornment from "@mui/material/InputAdornment";
 import TextField from "@mui/material/TextField";
-import { Clock3 } from "lucide-react";
-import { type FormEvent, memo, useCallback, useState } from "react";
+import { Clock3, Route } from "lucide-react";
+import { type FormEvent, memo, useCallback, useEffect, useMemo, useState } from "react";
 import { localInputToIso } from "../lib/format";
 import type { LocationValue, TripMetadata, TripPlanRequest } from "../types";
 import { formFieldSx } from "./form-control-styles";
@@ -41,12 +41,34 @@ const defaultLocations = {
   },
 } satisfies Record<string, LocationValue>;
 
+const submitButtonSx = {
+  minHeight: "44px",
+  borderRadius: "var(--radius-control)",
+  backgroundColor: "#173b5b",
+  fontFamily: "var(--font-ui)",
+  fontSize: "14px",
+  fontWeight: 700,
+  textTransform: "none",
+  "&:hover": { backgroundColor: "#173b5b", filter: "brightness(0.88)" },
+} as const;
+
+export interface TripFormDraft {
+  current: LocationValue | null;
+  pickup: LocationValue | null;
+  dropoff: LocationValue | null;
+  cycleUsedHours: string;
+  departureAt: string;
+  timezone: string;
+  metadata: TripMetadata;
+}
+
 interface TripFormProps {
   onGenerate: (request: TripPlanRequest) => Promise<void>;
   loading: boolean;
   apiError?: string;
   initialRequest?: TripPlanRequest;
   onFormChange: () => void;
+  onDraftChange?: (draft: TripFormDraft) => void;
   onPrepareResults?: () => void;
 }
 
@@ -68,6 +90,7 @@ export const TripForm = memo(function TripForm({
   apiError,
   initialRequest,
   onFormChange,
+  onDraftChange,
   onPrepareResults,
 }: TripFormProps) {
   const [current, setCurrent] = useState<LocationValue | null>(
@@ -86,6 +109,19 @@ export const TripForm = memo(function TripForm({
   const [timezone, setTimezone] = useState(initialRequest?.home_terminal_timezone ?? "");
   const [metadata, setMetadata] = useState<TripMetadata>(initialRequest?.metadata ?? {});
   const [errors, setErrors] = useState<FieldErrors>({});
+  const draft = useMemo<TripFormDraft>(() => ({
+    current,
+    pickup,
+    dropoff,
+    cycleUsedHours: cycleUsed,
+    departureAt,
+    timezone,
+    metadata,
+  }), [current, pickup, dropoff, cycleUsed, departureAt, timezone, metadata]);
+
+  useEffect(() => {
+    onDraftChange?.(draft);
+  }, [draft, onDraftChange]);
 
   const clearFieldError = useCallback((field: keyof FieldErrors) => {
     setErrors((previous) => previous[field]
@@ -170,7 +206,7 @@ export const TripForm = memo(function TripForm({
     <section className="planner-sidebar" aria-labelledby="trip-form-title">
       <div className="planner-sidebar__intro">
         <h1 id="trip-form-title">Enter trip details</h1>
-        <p>Enter trip details to get a compliant route, recommended stops, and daily log sheets.</p>
+        <p>Enter trip details to get an HOS-aware route under the stated assumptions, recommended stops, and daily log sheets.</p>
       </div>
 
       <form onSubmit={handleSubmit} noValidate aria-busy={loading}>
@@ -201,7 +237,7 @@ export const TripForm = memo(function TripForm({
           className={`field ${errors.cycle ? "field--error" : ""}`}
           error={Boolean(errors.cycle)}
           fullWidth
-          helperText={errors.cycle ?? "Driving and on-duty hours already worked in the current 70-hour/8-day cycle."}
+          helperText={errors.cycle ?? "Capped planning balance: enter 70 if actual driving and on-duty time is 70 hours or more."}
           id="cycle-used"
           label="Current cycle used (hours)"
           name="current_cycle_used_hours"
@@ -237,38 +273,41 @@ export const TripForm = memo(function TripForm({
           value={cycleUsed}
         />
 
-        <TripLogSettings
-          departureAt={departureAt}
-          metadata={metadata}
-          onDepartureChange={updateDepartureAt}
-          onMetadataChange={updateMetadata}
-          onTimezoneChange={updateTimezone}
-          timezone={timezone}
-        />
+        <div className="planner-actions">
+          <TripLogSettings
+            departureAt={departureAt}
+            metadata={metadata}
+            onDepartureChange={updateDepartureAt}
+            onMetadataChange={updateMetadata}
+            onTimezoneChange={updateTimezone}
+            timezone={timezone}
+          />
 
-        <Button
-          className="primary-button planner-submit"
-          disableElevation
-          disabled={loading}
-          fullWidth
-          onFocus={onPrepareResults}
-          onMouseEnter={onPrepareResults}
-          startIcon={loading ? <CircularProgress aria-hidden="true" color="inherit" size={18} /> : undefined}
-          sx={{
-            minHeight: "42px",
-            borderRadius: "var(--radius-control)",
-            backgroundColor: "var(--teal-950)",
-            fontFamily: "var(--font-ui)",
-            fontSize: "14px",
-            fontWeight: 700,
-            textTransform: "none",
-            "&:hover": { backgroundColor: "#00566a" },
-          }}
-          type="submit"
-          variant="contained"
-        >
-          {loading ? "Generating route…" : "Generate route & logs"}
-        </Button>
+          <div className="planner-submit-context">
+            <span aria-hidden="true" className="planner-submit-context__icon">
+              <Route size={17} />
+            </span>
+            <span>
+              <strong>Ready to build your trip plan</strong>
+              <small>Route, required stops, and daily logs in one step.</small>
+            </span>
+          </div>
+
+          <Button
+            className="primary-button planner-submit"
+            disableElevation
+            disabled={loading}
+            fullWidth
+            onFocus={onPrepareResults}
+            onMouseEnter={onPrepareResults}
+            startIcon={loading ? <CircularProgress aria-hidden="true" color="inherit" size={18} /> : undefined}
+            sx={submitButtonSx}
+            type="submit"
+            variant="contained"
+          >
+            {loading ? "Generating route…" : "Generate route & logs"}
+          </Button>
+        </div>
         </fieldset>
         {apiError ? (
           <Alert

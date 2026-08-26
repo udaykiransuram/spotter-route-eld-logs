@@ -5,8 +5,10 @@ export type StopType =
   | "dropoff"
   | "fuel"
   | "break"
+  | "meal_break"
   | "rest"
-  | "cycle_restart";
+  | "cycle_restart"
+  | "pretrip_inspection";
 
 export interface LocationValue {
   id?: string;
@@ -88,10 +90,12 @@ export interface ScheduledStop {
 
 export type DutyEventType =
   | "driving"
+  | "pretrip_inspection"
   | "pickup"
   | "dropoff"
   | "fuel"
   | "break"
+  | "meal_break"
   | "rest"
   | "cycle_restart";
 
@@ -125,6 +129,7 @@ export interface DailyLogRemark {
   timezone_abbreviation?: string;
   status: DutyStatus;
   location: string;
+  activity?: string;
   note: string;
 }
 
@@ -150,6 +155,11 @@ export interface DailyLog {
     cycle_used_at_end: number;
     remaining_cycle_hours: number;
     restart_completed: boolean;
+    seventy_hour_a?: number;
+    seventy_hour_b?: number;
+    seventy_hour_c?: number;
+    estimated?: boolean;
+    estimate_basis?: string;
   };
   segments: DailyLogSegment[];
   remarks: DailyLogRemark[];

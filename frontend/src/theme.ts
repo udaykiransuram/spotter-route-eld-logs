@@ -4,33 +4,33 @@ export const appTheme = createTheme({
   palette: {
     mode: "light",
     primary: {
-      main: "#003746",
-      dark: "#002a36",
-      light: "#e4f4f3",
+      main: "#173b5b",
+      dark: "#173b5b",
+      light: "#e8f1f8",
       contrastText: "#ffffff",
     },
     secondary: {
-      main: "#0878ed",
+      main: "#0d1e2d",
     },
     error: {
-      main: "#c94834",
+      main: "#ad3045",
     },
     warning: {
       main: "#b45309",
     },
     info: {
-      main: "#0878ed",
+      main: "#173b5b",
     },
     success: {
-      main: "#087158",
+      main: "#173b5b",
     },
     text: {
-      primary: "#071b35",
-      secondary: "#4b6175",
+      primary: "#0d1e2d",
+      secondary: "#475569",
     },
-    divider: "#d9e1e9",
+    divider: "#d7e0e8",
     background: {
-      default: "#ffffff",
+      default: "#f5f7fa",
       paper: "#ffffff",
     },
   },
@@ -42,7 +42,7 @@ export const appTheme = createTheme({
     },
   },
   shape: {
-    borderRadius: 8,
+    borderRadius: 10,
   },
   components: {
     MuiButton: {
@@ -51,17 +51,18 @@ export const appTheme = createTheme({
       },
       styleOverrides: {
         root: {
-          minHeight: 40,
-          borderRadius: 8,
-          fontSize: 14,
+          minHeight: 44,
+          borderRadius: 10,
+          fontSize: 13.5,
           lineHeight: 1.2,
+          transition: "background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease",
         },
       },
     },
     MuiIconButton: {
       styleOverrides: {
         root: {
-          borderRadius: 8,
+          borderRadius: 10,
         },
       },
     },
@@ -75,9 +76,16 @@ export const appTheme = createTheme({
     MuiOutlinedInput: {
       styleOverrides: {
         root: {
-          borderRadius: 8,
+          borderRadius: 10,
           backgroundColor: "#ffffff",
           fontSize: 13.5,
+          "&:hover .MuiOutlinedInput-notchedOutline": {
+            borderColor: "#94a6b7",
+          },
+          "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
+            borderColor: "#173b5b",
+            borderWidth: 2,
+          },
         },
       },
     },
@@ -86,6 +94,9 @@ export const appTheme = createTheme({
         root: {
           fontSize: 13.5,
           fontWeight: 650,
+          "&.Mui-focused": {
+            color: "#173b5b",
+          },
         },
       },
     },
@@ -137,7 +148,7 @@ export const appTheme = createTheme({
     MuiTab: {
       styleOverrides: {
         root: {
-          minHeight: 40,
+          minHeight: 44,
           textTransform: "none",
           fontSize: 13,
           fontWeight: 700,

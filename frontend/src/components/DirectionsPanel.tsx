@@ -30,7 +30,7 @@ export const DirectionsPanel = memo(function DirectionsPanel({ instructions }: {
         className="directions-panel__summary"
         expandIcon={<ChevronDown size={17} aria-hidden="true" />}
         id="route-instructions-header"
-        sx={{ minHeight: 45, padding: "0 14px", fontSize: 12, fontWeight: 700 }}
+        sx={{ minHeight: 48, padding: "0 15px", fontSize: 13, fontWeight: 750 }}
       >
         <span>Turn-by-turn route instructions ({instructions.length})</span>
       </AccordionSummary>

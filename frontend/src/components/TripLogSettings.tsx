@@ -96,7 +96,7 @@ export const TripLogSettings = memo(function TripLogSettings({
           "&.Mui-expanded": { minHeight: "50px" },
           "& .MuiAccordionSummary-content": {
             margin: 0,
-            color: "#0d213b",
+            color: "var(--ink)",
             fontFamily: "var(--font-ui)",
             fontSize: "12.5px",
             fontWeight: 700,
@@ -104,7 +104,7 @@ export const TripLogSettings = memo(function TripLogSettings({
           "& .MuiAccordionSummary-content.Mui-expanded": { margin: 0 },
         }}
       >
-        <span>Optional details for paper logs</span>
+        <span>Trip &amp; log settings</span>
       </AccordionSummary>
       <AccordionDetails
         className="settings-panel__content"
@@ -112,15 +112,15 @@ export const TripLogSettings = memo(function TripLogSettings({
         sx={{ display: "grid", gap: "14px", padding: "0 0 16px" }}
       >
         <p className="field-help">
-          Leave departure blank to start at the current time. Leave timezone blank to detect it
-          from Current location when you generate. The remaining details fill the matching fields
-          on each paper log.
+          Leave plan start blank to begin at the current time. The pre-trip starts then when cycle
+          time is available; otherwise the required restart begins first. Leave timezone blank to
+          detect it from Current location. The remaining details fill the paper logs.
         </p>
         <TextField
           className="field"
-          helperText="Leave blank to start now in the detected or entered timezone."
+          helperText="The schedule begins at this time; a required cycle restart may come before the pre-trip."
           id="departure-at"
-          label="Departure"
+          label="Plan start"
           name="departure_at"
           onChange={(event) => onDepartureChange(event.target.value)}
           slotProps={{
@@ -134,7 +134,7 @@ export const TripLogSettings = memo(function TripLogSettings({
         />
         <TextField
           className="field"
-          helperText="Uses Current location above—not your device GPS. This timezone controls departure and all daily-log times."
+          helperText="Uses Current location above—not your device GPS. This timezone controls duty start and all daily-log times."
           id="home-timezone"
           label="Home-terminal timezone"
           name="home_terminal_timezone"

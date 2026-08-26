@@ -1,8 +1,86 @@
 import { expect, test } from "@playwright/test";
 
+test("keeps the landing preview stable while optional details expand", async ({ page }) => {
+  const tripPlanRequests: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/v1/trip-plans") {
+      tripPlanRequests.push(`${request.method()} ${request.url()}`);
+    }
+  });
+
+  await page.goto("/");
+
+  const guidance = page.getByRole("region", { name: "Your route, stops, and logs in one view" });
+  const mapPreview = guidance.getByRole("group", { name: "Live route preview" });
+  const plannedLocations = mapPreview.getByRole("list", { name: "Planned route locations" });
+  await expect(guidance).toBeVisible();
+  await expect(plannedLocations).toContainText("Richmond, VA");
+  await expect(plannedLocations).toContainText("Nashville, TN");
+  await expect(plannedLocations).toContainText("Dallas, TX");
+  await expect(guidance.getByRole("listitem").filter({
+    hasText: "Select all three locations.",
+  })).toBeVisible();
+
+  const measurePreview = () => page.evaluate(() => {
+    const map = document.querySelector(".empty-results__map");
+    const guidancePanel = document.querySelector(".empty-results--intro");
+    if (!(map instanceof HTMLElement) || !(guidancePanel instanceof HTMLElement)) {
+      throw new Error("Landing preview elements are missing");
+    }
+    return {
+      mapHeight: map.getBoundingClientRect().height,
+      guidanceWidth: guidancePanel.getBoundingClientRect().width,
+    };
+  });
+  const before = await measurePreview();
+
+  const optionalDetailsButton = page.getByRole("button", {
+    name: "Trip & log settings",
+    exact: true,
+  });
+  await expect(optionalDetailsButton).toHaveAttribute("aria-expanded", "false");
+  await optionalDetailsButton.click();
+  await expect(optionalDetailsButton).toHaveAttribute("aria-expanded", "true");
+
+  const optionalDetails = page.getByRole("region", { name: "Trip & log settings" });
+  await expect(optionalDetails).toBeVisible();
+  const paperFields = [
+    ["Driver", "Alex Driver"],
+    ["Carrier", "Spotter Freight"],
+    ["Vehicle identifiers", "Tractor 18"],
+    ["Shipping details", "BOL 547"],
+  ] as const;
+  for (const [label, value] of paperFields) {
+    const field = optionalDetails.getByRole("textbox", { name: label, exact: true });
+    await field.fill(value);
+    await expect(field).toHaveValue(value);
+  }
+
+  await expect(plannedLocations).toContainText("Richmond, VA");
+  await expect(plannedLocations).toContainText("Nashville, TN");
+  await expect(plannedLocations).toContainText("Dallas, TX");
+
+  const after = await measurePreview();
+  expect(Math.abs(after.mapHeight - before.mapHeight)).toBeLessThanOrEqual(1);
+  expect(Math.abs(after.guidanceWidth - before.guidanceWidth)).toBeLessThanOrEqual(1);
+  expect(tripPlanRequests).toEqual([]);
+
+  const widths = await page.evaluate(() => ({
+    viewport: document.documentElement.clientWidth,
+    document: document.documentElement.scrollWidth,
+    body: document.body.scrollWidth,
+  }));
+  expect(widths.document).toBeLessThanOrEqual(widths.viewport + 1);
+  expect(widths.body).toBeLessThanOrEqual(widths.viewport + 1);
+});
+
 test("generates a route, synchronizes stops, and opens filled daily logs", async ({ page }, testInfo) => {
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
+  let releaseTripPlanRequest!: () => void;
+  const tripPlanRequestGate = new Promise<void>((resolve) => {
+    releaseTripPlanRequest = resolve;
+  });
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
@@ -18,7 +96,7 @@ test("generates a route, synchronizes stops, and opens filled daily logs", async
     });
   });
   await page.route("**/api/v1/trip-plans", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 450));
+    await tripPlanRequestGate;
     await route.continue();
   });
 
@@ -37,6 +115,28 @@ test("generates a route, synchronizes stops, and opens filled daily logs", async
   }));
   expect(loadingWidths.statusRight).toBeLessThanOrEqual(loadingWidths.viewport + 1);
   expect(loadingWidths.document).toBeLessThanOrEqual(loadingWidths.viewport + 1);
+  if (testInfo.project.name === "desktop-chromium") {
+    const loadingSpacing = await page.evaluate(() => {
+      const formCard = document.querySelector(".route-workspace__left");
+      const settings = document.querySelector(".settings-panel");
+      const submit = document.querySelector(".planner-submit");
+      if (!(formCard instanceof HTMLElement)
+        || !(settings instanceof HTMLElement)
+        || !(submit instanceof HTMLElement)) {
+        throw new Error("Loading form layout elements are missing");
+      }
+      const cardRect = formCard.getBoundingClientRect();
+      const settingsRect = settings.getBoundingClientRect();
+      const submitRect = submit.getBoundingClientRect();
+      return {
+        cardHeight: cardRect.height,
+        gapBeforeSubmit: submitRect.top - settingsRect.bottom,
+      };
+    });
+    expect(loadingSpacing.cardHeight).toBeLessThan(700);
+    expect(loadingSpacing.gapBeforeSubmit).toBeLessThanOrEqual(24);
+  }
+  releaseTripPlanRequest();
   await expect(page.getByRole("heading", { name: "Route plan" })).toBeVisible();
   await expect(generationStatus).toHaveCount(0);
   const distanceMetric = page.getByLabel("Trip summary")
@@ -48,14 +148,39 @@ test("generates a route, synchronizes stops, and opens filled daily logs", async
   await expect(page.locator(".route-map-shell")).toHaveAttribute("data-map-status", "ready");
   await expect(page.locator(".route-map canvas")).toBeVisible();
   await expect(page.locator("link[rel='preconnect'][href='https://tiles.openfreemap.org']")).toHaveCount(1);
+  const mapControls = page.getByRole("group", { name: "Map controls" });
+  await expect(mapControls).toBeVisible();
+  const expectedControlSize = testInfo.project.name === "mobile-chromium" ? 44 : 40;
+  for (const controlName of ["Zoom in", "Zoom out", "Fit full route"]) {
+    const control = mapControls.getByRole("button", { name: controlName });
+    await expect(control).toBeVisible();
+    const controlBox = await control.boundingBox();
+    expect(controlBox?.width).toBeGreaterThanOrEqual(expectedControlSize);
+    expect(controlBox?.height).toBeGreaterThanOrEqual(expectedControlSize);
+  }
+  await mapControls.getByRole("button", { name: "Zoom in" }).click();
+  await mapControls.getByRole("button", { name: "Zoom out" }).click();
+  await mapControls.getByRole("button", { name: "Fit full route" }).click();
 
   await expect(page.locator(".directions-panel__body li")).toHaveCount(0);
   await page.getByText(/Turn-by-turn route instructions/).click();
   expect(await page.locator(".directions-panel__body li").count()).toBeGreaterThan(0);
 
   const mapMarkers = page.locator(".route-map .map-marker");
+  const currentLocationMarker = page.getByRole("img", { name: /Current location, Richmond/i });
+  const scheduledMapMarkers = page.locator(".route-map button.map-marker");
   const itineraryStops = page.locator(".itinerary-stop");
-  await expect(mapMarkers).toHaveCount(await itineraryStops.count());
+  const itineraryStopCount = await itineraryStops.count();
+  await expect(currentLocationMarker).toBeVisible();
+  await expect(currentLocationMarker.locator(".map-marker__icon")).toHaveCount(1);
+  await expect(page.locator(".route-map .map-stop-marker[role='button']")).toHaveCount(0);
+  await expect(page.locator(".route-map .map-stop-marker[aria-label='Map marker']")).toHaveCount(0);
+  await expect(mapMarkers).toHaveCount(itineraryStopCount + 1);
+  await expect(scheduledMapMarkers).toHaveCount(itineraryStopCount);
+  await expect(mapMarkers.locator(".map-marker__icon")).toHaveCount(itineraryStopCount + 1);
+  await expect(scheduledMapMarkers.locator(".map-marker__sequence")).toHaveCount(itineraryStopCount);
+  await expect(itineraryStops.locator(".stop-number > svg")).toHaveCount(itineraryStopCount);
+  await expect(itineraryStops.locator(".stop-number__sequence")).toHaveCount(itineraryStopCount);
   await page.locator(".route-map .map-marker[aria-label*='drop-off' i]").click();
   await expect(page.locator(".route-map .map-marker[aria-label*='drop-off' i]")).toHaveAttribute("aria-pressed", "true");
   const selectedStop = page.locator(".itinerary-stop[aria-pressed='true']");
@@ -68,6 +193,16 @@ test("generates a route, synchronizes stops, and opens filled daily logs", async
   await expect(page.getByText("Generated trip plan — not a certified ELD record.")).toBeVisible();
   await expect(page.locator(".log-stage .daily-log-template")).toHaveCount(1);
   await expect(page.locator(".log-sheet image, .log-sheet foreignObject")).toHaveCount(0);
+  const paperLog = page.locator(".log-stage .log-sheet");
+  await expect(paperLog.locator('[data-paper-recap="estimate-label"]')).toHaveText("Estimated from cycle total");
+  for (const recapKey of ["a", "b", "c"]) {
+    await expect(paperLog.locator(`[data-paper-recap="seventy-hour-${recapKey}"]`)).toHaveText(/^\d+\.\d{2}$/);
+  }
+  await expect(paperLog.locator('[data-paper-recap="sixty-hour-not-applicable"]')).toHaveText([
+    "N/A",
+    "N/A",
+    "N/A",
+  ]);
   const generatedLogCount = await page.locator("[role='tablist'][aria-label='Trip days'] [role='tab']").count();
   expect(generatedLogCount).toBeGreaterThan(1);
 
@@ -107,9 +242,23 @@ test("generates a route, synchronizes stops, and opens filled daily logs", async
   await expect(page.locator(".log-stage").getByRole("button", { name: "Exit full screen" })).toHaveCount(0);
 
   const dayTwo = page.getByRole("tab", { name: /Day 2/ });
-  await dayTwo.click();
+  if (testInfo.project.name === "mobile-chromium") {
+    await page.getByRole("button", { name: "Next day" }).click();
+  } else {
+    await dayTwo.click();
+  }
   await expect(dayTwo).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("heading", { name: "Day 2 summary" })).toBeVisible();
+  if (testInfo.project.name === "mobile-chromium") {
+    const selectedTabIsVisible = await dayTwo.evaluate((tab) => {
+      const scroller = tab.closest(".day-tabs");
+      if (!(scroller instanceof HTMLElement)) return false;
+      const tabRect = tab.getBoundingClientRect();
+      const scrollerRect = scroller.getBoundingClientRect();
+      return tabRect.left >= scrollerRect.left - 1 && tabRect.right <= scrollerRect.right + 1;
+    });
+    expect(selectedTabIsVisible).toBe(true);
+  }
 
   await page.evaluate(() => {
     window.print = () => document.documentElement.setAttribute("data-print-called", "true");

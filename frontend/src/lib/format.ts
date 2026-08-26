@@ -33,9 +33,11 @@ export const stopTypeLabels: Record<StopType, string> = {
   pickup: "Pickup",
   dropoff: "Drop-off",
   fuel: "Fuel stop",
-  break: "30 min break",
-  rest: "10h rest",
-  cycle_restart: "34h cycle restart",
+  break: "Driving break",
+  meal_break: "Meal / rest break",
+  rest: "Daily rest · meal + sleeper",
+  cycle_restart: "Cycle restart",
+  pretrip_inspection: "Pre-trip inspection",
 };
 
 export function formatMiles(value: number) {

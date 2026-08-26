@@ -2,7 +2,7 @@ import Autocomplete from "@mui/material/Autocomplete";
 import CircularProgress from "@mui/material/CircularProgress";
 import InputAdornment from "@mui/material/InputAdornment";
 import TextField from "@mui/material/TextField";
-import { Check, ChevronDown, MapPin, Search, X } from "lucide-react";
+import { Check, ChevronDown, MapPin, X } from "lucide-react";
 import { memo, useEffect, useId, useState } from "react";
 import {
   ApiError,
@@ -173,7 +173,7 @@ export const LocationAutocomplete = memo(function LocationAutocomplete({
               ...params.slotProps.input,
               startAdornment: (
                 <InputAdornment position="start">
-                  <Search size={17} aria-hidden="true" />
+                  <MapPin size={17} aria-hidden="true" />
                 </InputAdornment>
               ),
               endAdornment: (

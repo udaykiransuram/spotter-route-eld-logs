@@ -183,16 +183,50 @@ def test_create_plan_contract_and_invariants() -> None:
     assert [stop["sequence"] for stop in result["stops"]] == list(
         range(1, len(result["stops"]) + 1)
     )
+    assert result["summary"]["stop_count"] == len(result["stops"])
+    assert any(event["event_type"] == "pretrip_inspection" for event in result["duty_events"])
+    assert all(stop["type"] != "pretrip_inspection" for stop in result["stops"])
+    standalone_meal_stops = [stop for stop in result["stops"] if stop["type"] == "meal_break"]
+    assert standalone_meal_stops
+    assert all(stop["duration_minutes"] == 30 for stop in standalone_meal_stops)
+    event_index = {event["id"]: index for index, event in enumerate(result["duty_events"])}
+    rest_stops = [stop for stop in result["stops"] if stop["type"] == "rest"]
+    assert rest_stops
+    for stop in rest_stops:
+        rest_index = event_index[stop["id"]]
+        meal_event = result["duty_events"][rest_index - 1]
+        rest_event = result["duty_events"][rest_index]
+        assert meal_event["event_type"] == "meal_break"
+        assert meal_event["status"] == "off_duty"
+        assert meal_event["duration_hours"] == 1
+        assert rest_event["status"] == "sleeper_berth"
+        assert rest_event["duration_hours"] == 9
+        assert stop["scheduled_at"] == meal_event["start_at"]
+        assert stop["duration_minutes"] == 600
+        assert "Off Duty" in stop["reason"]
+        assert "Sleeper Berth" in stop["reason"]
     assert sum(log["total_miles"] for log in result["daily_logs"]) == pytest.approx(
         result["summary"]["distance_miles"]
     )
     assert all(
         sum(log["status_totals"].values()) == pytest.approx(24) for log in result["daily_logs"]
     )
+    for log in result["daily_logs"]:
+        recap = log["recap"]
+        assert recap["seventy_hour_a"] == recap["cycle_used_at_end"]
+        assert recap["seventy_hour_b"] == pytest.approx(max(0, 70 - recap["seventy_hour_a"]))
+        assert recap["seventy_hour_c"] == recap["cycle_used_at_end"]
+        assert recap["estimated"] is True
+        assert "Conservative 70-hour/8-day estimate" in recap["estimate_basis"]
     assert all("metadata" not in log for log in result["daily_logs"])
     assert result["metadata"]["main_office_address"] == "100 Main Street, Richmond, VA"
     assert result["metadata"]["home_terminal_address"] == "200 Terminal Road, Richmond, VA"
     assert result["notice"] == "Generated trip plan — not a certified ELD record."
+    assert any(
+        "70-hour/8-day paper recap is a conservative estimate" in warning
+        for warning in result["warnings"]
+    )
+    assert all("cannot be reconstructed" not in warning for warning in result["warnings"])
     assert result["attribution"]["map"]
     public_locations = [
         *(event["start_location"] for event in result["duty_events"]),

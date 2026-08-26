@@ -1,4 +1,4 @@
-import { FileText, Fuel, MapPin, Navigation, Route, TimerReset } from "lucide-react";
+import { FileText, Flag, Fuel, MapPin, Navigation, Route, TimerReset } from "lucide-react";
 import type { TripPlanRequest } from "../types";
 
 interface RouteGenerationLoadingProps {
@@ -13,7 +13,7 @@ export function RouteGenerationLoading({ request }: RouteGenerationLoadingProps)
   const locations = [
     { label: "Current", name: locationName(request.current_location.label), icon: Navigation },
     { label: "Pickup", name: locationName(request.pickup_location.label), icon: MapPin },
-    { label: "Drop-off", name: locationName(request.dropoff_location.label), icon: MapPin },
+    { label: "Drop-off", name: locationName(request.dropoff_location.label), icon: Flag },
   ];
 
   return (
@@ -28,7 +28,7 @@ export function RouteGenerationLoading({ request }: RouteGenerationLoadingProps)
           <svg
             className="route-generation-loading__route-line"
             focusable="false"
-            preserveAspectRatio="none"
+            preserveAspectRatio="xMidYMid meet"
             viewBox="0 0 640 180"
           >
             <path
@@ -64,7 +64,7 @@ export function RouteGenerationLoading({ request }: RouteGenerationLoadingProps)
         <div className="route-generation-loading__copy">
           <h2>Building your route &amp; logs</h2>
           <p>
-            Calculating the heavy-truck route, scheduling hours-of-service stops,
+            Calculating the heavy-truck route, scheduling inspections, breaks, and rest,
             and preparing daily log sheets.
           </p>
         </div>
@@ -76,7 +76,7 @@ export function RouteGenerationLoading({ request }: RouteGenerationLoadingProps)
           </li>
           <li>
             <span><Fuel size={18} /></span>
-            <strong>Break &amp; fuel schedule</strong>
+            <strong>Duty &amp; stop schedule</strong>
           </li>
           <li>
             <span><FileText size={18} /></span>

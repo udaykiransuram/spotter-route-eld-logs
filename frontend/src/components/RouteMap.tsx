@@ -4,13 +4,16 @@ import maplibregl, {
   type Marker,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { Maximize2, Minus, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { dutyStatusLabels, formatTime, stopTypeLabels } from "../lib/format";
 import type { TripPlan } from "../types";
 import { MapFallback } from "./MapFallback";
 import {
   calculateMarkerDisplacements,
   createPersistentFailureTracker,
 } from "./route-map-layout";
+import { createStopTypeIconElement } from "./stop-type-icon";
 import "./RouteMap.css";
 
 interface RouteMapProps {
@@ -22,12 +25,12 @@ interface RouteMapProps {
 interface MarkerRecord {
   marker: Marker;
   root: HTMLDivElement;
-  element: HTMLButtonElement;
+  element: HTMLElement;
   stem: HTMLSpanElement;
   lon: number;
   lat: number;
   sequence: number;
-  handleClick: () => void;
+  handleClick?: () => void;
 }
 
 type MapStatus =
@@ -38,6 +41,30 @@ type MapStatus =
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
 const MAP_STYLE_TIMEOUT_MS = 15_000;
 const POST_LOAD_RESOURCE_ERROR_LIMIT = 4;
+const CURRENT_LOCATION_MARKER_ID = "__current-location";
+
+function createMarkerShell(extraClassName?: string) {
+  const root = document.createElement("div");
+  root.className = `map-stop-marker${extraClassName ? ` ${extraClassName}` : ""}`;
+
+  const anchor = document.createElement("span");
+  anchor.className = "map-stop-marker__anchor";
+  anchor.setAttribute("aria-hidden", "true");
+  root.append(anchor);
+
+  const stem = document.createElement("span");
+  stem.className = "map-stop-marker__stem";
+  stem.setAttribute("aria-hidden", "true");
+  root.append(stem);
+
+  return { root, stem };
+}
+
+function neutralizeMapLibreMarkerSemantics(root: HTMLDivElement) {
+  root.setAttribute("role", "presentation");
+  root.removeAttribute("aria-label");
+  root.removeAttribute("tabindex");
+}
 
 function applyCalmMapPalette(map: MapLibreMap) {
   const setPaint = (layerId: string, property: string, value: string | number) => {
@@ -45,18 +72,18 @@ function applyCalmMapPalette(map: MapLibreMap) {
   };
 
   setPaint("background", "background-color", "#f8f7f3");
-  setPaint("natural_earth", "raster-opacity", 0.2);
-  setPaint("natural_earth", "raster-saturation", -0.7);
-  setPaint("natural_earth", "raster-contrast", -0.12);
+  setPaint("natural_earth", "raster-opacity", 0.08);
+  setPaint("natural_earth", "raster-saturation", 0.2);
+  setPaint("natural_earth", "raster-contrast", -0.08);
   setPaint("water", "fill-color", "#d9eaf4");
-  setPaint("park", "fill-color", "#dfeadd");
-  setPaint("park", "fill-opacity", 0.58);
-  setPaint("park", "fill-outline-color", "#c7d8c4");
-  setPaint("park_outline", "line-color", "#c7d8c4");
-  setPaint("landcover_wood", "fill-color", "#dce8d7");
-  setPaint("landcover_wood", "fill-opacity", 0.28);
-  setPaint("landcover_grass", "fill-color", "#e5ecdc");
-  setPaint("landcover_grass", "fill-opacity", 0.24);
+  setPaint("park", "fill-color", "#cfeacb");
+  setPaint("park", "fill-opacity", 0.82);
+  setPaint("park", "fill-outline-color", "#a9d0a5");
+  setPaint("park_outline", "line-color", "#a9d0a5");
+  setPaint("landcover_wood", "fill-color", "#c9e5c4");
+  setPaint("landcover_wood", "fill-opacity", 0.68);
+  setPaint("landcover_grass", "fill-color", "#dcefc5");
+  setPaint("landcover_grass", "fill-opacity", 0.58);
   setPaint("landuse_residential", "fill-color", "#f0efec");
 
   for (const layer of map.getStyle().layers) {
@@ -113,6 +140,7 @@ function updateMarkerLayout(map: MapLibreMap, markers: Map<string, MarkerRecord>
 export default function RouteMap({ plan, selectedStopId, onSelectStop }: RouteMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
+  const routeBoundsRef = useRef<LngLatBounds | null>(null);
   const markersRef = useRef(new Map<string, MarkerRecord>());
   const selectRef = useRef(onSelectStop);
   const layoutFrameRef = useRef<number | null>(null);
@@ -155,7 +183,9 @@ export default function RouteMap({ plan, selectedStopId, onSelectStop }: RouteMa
       if (styleTimeout !== null) window.clearTimeout(styleTimeout);
       resizeObserver?.disconnect();
       for (const record of markers.values()) {
-        record.element.removeEventListener("click", record.handleClick);
+        if (record.handleClick) {
+          record.element.removeEventListener("click", record.handleClick);
+        }
         record.marker.remove();
       }
       markers.clear();
@@ -186,8 +216,19 @@ export default function RouteMap({ plan, selectedStopId, onSelectStop }: RouteMa
       };
     }
 
+    const requestStart = plan.request?.current_location;
+    const dutyEventStart = plan.duty_events[0]?.start_coordinates;
+    const [currentLon, currentLat] = requestStart
+      ? [requestStart.lon, requestStart.lat]
+      : dutyEventStart ?? routeCoordinates[0];
+    const currentLabel = requestStart?.label
+      ?? plan.duty_events[0]?.start_location
+      ?? "Current location";
+
     const bounds = new LngLatBounds(routeCoordinates[0], routeCoordinates[0]);
     for (const coordinate of routeCoordinates) bounds.extend(coordinate);
+    bounds.extend([currentLon, currentLat]);
+    routeBoundsRef.current = bounds;
 
     try {
       const mapPadding = container.clientWidth < 640 ? 36 : 56;
@@ -197,6 +238,7 @@ export default function RouteMap({ plan, selectedStopId, onSelectStop }: RouteMa
         bounds,
         fitBoundsOptions: { padding: mapPadding, maxZoom: 12 },
         attributionControl: false,
+        cooperativeGestures: window.matchMedia("(pointer: coarse)").matches,
       });
       mapRef.current = map;
       map.dragRotate.disable();
@@ -207,7 +249,6 @@ export default function RouteMap({ plan, selectedStopId, onSelectStop }: RouteMa
         scheduleMarkerLayout();
       });
       resizeObserver.observe(container);
-      map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
       map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
 
       map.on("move", scheduleMarkerLayout);
@@ -240,7 +281,7 @@ export default function RouteMap({ plan, selectedStopId, onSelectStop }: RouteMa
             type: "line",
             source: "trip-route",
             layout: { "line-cap": "round", "line-join": "round" },
-            paint: { "line-color": "#006d77", "line-width": 5 },
+            paint: { "line-color": "#173b5b", "line-width": 5 },
           }, firstSymbolLayerId);
           styleReady = true;
           if (styleTimeout !== null) window.clearTimeout(styleTimeout);
@@ -251,25 +292,45 @@ export default function RouteMap({ plan, selectedStopId, onSelectStop }: RouteMa
         }
       });
 
+      const currentShell = createMarkerShell("map-stop-marker--current");
+      const currentElement = document.createElement("div");
+      currentElement.className = "map-marker map-marker--current";
+      currentElement.setAttribute("aria-label", `Current location, ${currentLabel}`);
+      currentElement.setAttribute("role", "img");
+      currentElement.setAttribute("title", `Current location: ${currentLabel}`);
+      currentElement.append(createStopTypeIconElement("start", "map-marker__icon"));
+      currentShell.root.append(currentElement);
+
+      const currentMarker = new maplibregl.Marker({ element: currentShell.root, anchor: "center" })
+        .setLngLat([currentLon, currentLat])
+        .addTo(map);
+      neutralizeMapLibreMarkerSemantics(currentShell.root);
+      markers.set(CURRENT_LOCATION_MARKER_ID, {
+        marker: currentMarker,
+        root: currentShell.root,
+        element: currentElement,
+        stem: currentShell.stem,
+        lon: currentLon,
+        lat: currentLat,
+        sequence: 0,
+      });
+
       for (const stop of plan.stops) {
-        const root = document.createElement("div");
-        root.className = "map-stop-marker";
-
-        const anchor = document.createElement("span");
-        anchor.className = "map-stop-marker__anchor";
-        anchor.setAttribute("aria-hidden", "true");
-        root.append(anchor);
-
-        const stem = document.createElement("span");
-        stem.className = "map-stop-marker__stem";
-        stem.setAttribute("aria-hidden", "true");
-        root.append(stem);
+        const { root, stem } = createMarkerShell();
 
         const element = document.createElement("button");
         element.className = `map-marker map-marker--${stop.type}`;
         element.type = "button";
-        element.textContent = String(stop.sequence);
-        element.setAttribute("aria-label", `${stop.sequence}. ${stop.label}: ${stop.reason}`);
+        element.append(createStopTypeIconElement(stop.type, "map-marker__icon"));
+        const sequence = document.createElement("span");
+        sequence.className = "map-marker__sequence";
+        sequence.textContent = String(stop.sequence);
+        element.append(sequence);
+        const timezone = plan.daily_logs[0]?.timezone;
+        element.setAttribute(
+          "aria-label",
+          `${stop.sequence}. ${stopTypeLabels[stop.type]}, ${stop.label}, ${formatTime(stop.scheduled_at, timezone)}, ${stop.type === "rest" ? "Off Duty meal and Sleeper Berth" : dutyStatusLabels[stop.duty_status]}`,
+        );
         element.setAttribute("aria-pressed", "false");
         const handleClick = () => selectRef.current(stop.id);
         element.addEventListener("click", handleClick);
@@ -278,6 +339,7 @@ export default function RouteMap({ plan, selectedStopId, onSelectStop }: RouteMa
         const marker = new maplibregl.Marker({ element: root, anchor: "center" })
           .setLngLat([stop.lon, stop.lat])
           .addTo(map);
+        neutralizeMapLibreMarkerSemantics(root);
         markers.set(stop.id, {
           marker,
           root,
@@ -299,12 +361,14 @@ export default function RouteMap({ plan, selectedStopId, onSelectStop }: RouteMa
 
     return () => {
       mounted = false;
+      routeBoundsRef.current = null;
       teardown();
     };
   }, [plan]);
 
   useEffect(() => {
-    for (const [id, { element }] of markersRef.current) {
+    for (const [id, { element, handleClick }] of markersRef.current) {
+      if (!handleClick) continue;
       const selected = id === selectedStopId;
       element.classList.toggle("map-marker--selected", selected);
       element.setAttribute("aria-pressed", String(selected));
@@ -313,26 +377,73 @@ export default function RouteMap({ plan, selectedStopId, onSelectStop }: RouteMa
       ? plan.stops.find((stop) => stop.id === selectedStopId)
       : undefined;
     if (selected && mapRef.current) {
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       mapRef.current.easeTo({
         center: [selected.lon, selected.lat],
         zoom: Math.max(mapRef.current.getZoom(), 6),
-        duration: 500,
+        duration: reduceMotion ? 0 : 420,
       });
     }
   }, [plan.stops, selectedStopId]);
 
+  const fitFullRoute = () => {
+    const map = mapRef.current;
+    const bounds = routeBoundsRef.current;
+    const container = containerRef.current;
+    if (!map || !bounds || !container) return;
+    map.fitBounds(bounds, {
+      padding: container.clientWidth < 640 ? 36 : 56,
+      maxZoom: 12,
+      duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 420,
+    });
+  };
+
+  const changeZoom = (delta: number) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const targetZoom = Math.max(
+      map.getMinZoom(),
+      Math.min(map.getMaxZoom(), map.getZoom() + delta),
+    );
+    map.easeTo({
+      zoom: targetZoom,
+      duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 240,
+    });
+  };
+
   const fallback = mapStatus.state === "error"
     ? <MapFallback error={mapStatus.message} />
     : <MapFallback />;
+  const routeStart = plan.request?.current_location.label ?? plan.duty_events[0]?.start_location ?? "the current location";
+  const routePickup = plan.request?.pickup_location.label;
+  const routeEnd = plan.request?.dropoff_location.label ?? plan.duty_events.at(-1)?.end_location ?? "the drop-off";
 
   return (
     <div className="route-map-shell" data-map-status={mapStatus.state}>
+      <p className="sr-only" id={`route-map-description-${plan.id}`}>
+        {Math.round(plan.summary.distance_miles).toLocaleString()}-mile truck route from {routeStart}
+        {routePickup ? ` through ${routePickup}` : ""} to {routeEnd} with {plan.stops.length} scheduled stops.
+      </p>
       <div
         ref={containerRef}
         className="route-map"
         aria-label="Truck route map with scheduled stops"
+        aria-describedby={`route-map-description-${plan.id}`}
         aria-hidden={mapStatus.state === "error"}
       />
+      {mapStatus.state === "ready" ? (
+        <div className="route-map__controls" role="group" aria-label="Map controls">
+          <button className="route-map__control" type="button" onClick={() => changeZoom(1)} aria-label="Zoom in" title="Zoom in">
+            <Plus size={18} aria-hidden="true" />
+          </button>
+          <button className="route-map__control" type="button" onClick={() => changeZoom(-1)} aria-label="Zoom out" title="Zoom out">
+            <Minus size={18} aria-hidden="true" />
+          </button>
+          <button className="route-map__control" type="button" onClick={fitFullRoute} aria-label="Fit full route" title="Fit full route">
+            <Maximize2 size={18} aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
       {mapStatus.state !== "ready" ? <div className="route-map__fallback">{fallback}</div> : null}
       <noscript>The route map requires JavaScript. All stops are also listed in the route plan.</noscript>
     </div>

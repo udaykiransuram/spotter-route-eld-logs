@@ -2,8 +2,8 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { ApiError, generateTripPlan, prepareApiConnection } from "../api/client";
 import { AppHeader } from "../components/AppHeader";
 import { RouteGenerationLoading } from "../components/RouteGenerationLoading";
-import { TripForm } from "../components/TripForm";
-import { TripPlanPreview } from "../components/TripPlanPreview";
+import { TripForm, type TripFormDraft } from "../components/TripForm";
+import { TripRouteArtwork } from "../components/TripPlanPreview";
 import { usePlan } from "../state/plan-context";
 import type { TripPlanRequest } from "../types";
 
@@ -35,6 +35,7 @@ export function RoutePage() {
   const [loading, setLoading] = useState(false);
   const [pendingRequest, setPendingRequest] = useState<TripPlanRequest | null>(null);
   const [error, setError] = useState("");
+  const [formDraft, setFormDraft] = useState<TripFormDraft | null>(null);
   const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
   const activeRequestRef = useRef<AbortController | null>(null);
   const pendingFocusPlanIdRef = useRef<string | null>(null);
@@ -92,52 +93,60 @@ export function RoutePage() {
     document.getElementById("route-results")?.focus({ preventScroll: false });
   }, []);
 
+  const tripFormPanel = (
+    <div className="route-workspace__left">
+      <TripForm
+        onGenerate={handleGenerate}
+        loading={loading}
+        apiError={error}
+        initialRequest={plan?.request}
+        onFormChange={handleFormChange}
+        onDraftChange={setFormDraft}
+        onPrepareResults={handlePrepareResults}
+      />
+      {plan ? (
+        <Suspense fallback={null}>
+          <AssumptionsPanel assumptions={plan.assumptions} warnings={plan.warnings} />
+        </Suspense>
+      ) : null}
+    </div>
+  );
+
+  const routeContent = plan ? (
+    <Suspense fallback={<div className="route-results" role="status">Preparing route view…</div>}>
+      <GeneratedRouteResults
+        plan={plan}
+        selectedStopId={selectedStopId}
+        onSelectStop={setSelectedStopId}
+        onReady={handleResultsReady}
+        updating={loading}
+      />
+    </Suspense>
+  ) : loading && pendingRequest ? (
+    <RouteGenerationLoading request={pendingRequest} />
+  ) : (
+    <section className="empty-results empty-results--intro" aria-labelledby="empty-results-title">
+      <div className="empty-results__copy empty-results__copy--intro">
+        <h2 id="empty-results-title">Your route, stops, and logs in one view</h2>
+        <p>Confirm the trip details, then generate a route that accounts for pre-trip inspections, driving limits, breaks, fuel, pickup, and drop-off time.</p>
+        <ol>
+          <li><span>1</span>Select all three locations.</li>
+          <li><span>2</span>Enter hours already used in your 70-hour cycle.</li>
+          <li><span>3</span>Generate the route and review each daily log.</li>
+        </ol>
+      </div>
+      <div className="empty-results__map empty-results__map--route">
+        <TripRouteArtwork draft={formDraft} standalone />
+      </div>
+    </section>
+  );
+
   return (
     <div className="app-shell">
-      <AppHeader />
-      <main className={`route-workspace ${plan ? "route-workspace--results" : "route-workspace--empty"}`}>
-        <div className="route-workspace__left">
-          <TripForm
-            onGenerate={handleGenerate}
-            loading={loading}
-            apiError={error}
-            initialRequest={plan?.request}
-            onFormChange={handleFormChange}
-            onPrepareResults={handlePrepareResults}
-          />
-          {plan ? (
-            <Suspense fallback={null}>
-              <AssumptionsPanel assumptions={plan.assumptions} warnings={plan.warnings} />
-            </Suspense>
-          ) : null}
-        </div>
-
-        {plan ? (
-          <Suspense fallback={<div className="route-results" role="status">Preparing route view…</div>}>
-            <GeneratedRouteResults
-              plan={plan}
-              selectedStopId={selectedStopId}
-              onSelectStop={setSelectedStopId}
-              onReady={handleResultsReady}
-              updating={loading}
-            />
-          </Suspense>
-        ) : loading && pendingRequest ? (
-          <RouteGenerationLoading request={pendingRequest} />
-        ) : (
-          <section className="empty-results" aria-labelledby="empty-results-title">
-            <div className="empty-results__copy">
-              <h2 id="empty-results-title">Your route, stops, and logs in one view</h2>
-              <p>Confirm the trip details, then generate a route that accounts for driving limits, breaks, fuel, pickup, and drop-off time.</p>
-              <ol>
-                <li><span>1</span>Select all three locations.</li>
-                <li><span>2</span>Enter hours already used in your 70-hour cycle.</li>
-                <li><span>3</span>Generate the route and review each daily log.</li>
-              </ol>
-            </div>
-            <div className="empty-results__map"><TripPlanPreview /></div>
-          </section>
-        )}
+      <AppHeader landing={!plan && !loading} />
+      <main className={`route-workspace ${plan ? "route-workspace--results" : "route-workspace--empty"}${!plan && !loading ? " route-workspace--landing" : ""}${!plan && loading ? " route-workspace--loading" : ""}`}>
+        {plan ? routeContent : tripFormPanel}
+        {plan ? tripFormPanel : routeContent}
       </main>
     </div>
   );

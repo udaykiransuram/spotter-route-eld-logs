@@ -2,7 +2,7 @@
 export const formFieldSx = {
   minWidth: 0,
   "& .MuiInputBase-root": {
-    minHeight: "41px",
+    minHeight: "44px",
     borderRadius: "var(--radius-control)",
     backgroundColor: "#ffffff",
     fontFamily: "var(--font-ui)",
@@ -12,25 +12,25 @@ export const formFieldSx = {
     borderColor: "var(--border-dark)",
   },
   "& .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline": {
-    borderColor: "#9aabbb",
+    borderColor: "var(--teal-700)",
   },
   "& .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline": {
     borderColor: "var(--blue)",
     borderWidth: "1px",
-    boxShadow: "0 0 0 3px rgba(8, 120, 237, 0.14)",
+    boxShadow: "0 0 0 3px rgba(36, 91, 131, 0.16)",
   },
   "& .MuiOutlinedInput-root.Mui-error .MuiOutlinedInput-notchedOutline": {
-    borderColor: "#d43f2b",
+    borderColor: "var(--coral-strong)",
   },
   "& .MuiInputBase-input": {
     boxSizing: "border-box",
-    height: "39px",
+    height: "42px",
     border: "0 !important",
     boxShadow: "none !important",
     outline: "none !important",
   },
   "& .MuiInputLabel-root": {
-    color: "#0d213b",
+    color: "var(--ink)",
     fontFamily: "var(--font-ui)",
     fontSize: "13px",
     fontWeight: 700,
@@ -46,7 +46,7 @@ export const formFieldSx = {
     lineHeight: 1.4,
   },
   "& .MuiFormHelperText-root.Mui-error": {
-    color: "#b62e1e",
+    color: "var(--coral-strong)",
   },
 } as const;
 

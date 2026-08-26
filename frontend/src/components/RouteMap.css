@@ -8,8 +8,25 @@
 .map-stop-marker .map-marker {
   position: absolute;
   z-index: 2;
-  margin: -15px 0 0 -15px;
+  margin: -17px 0 0 -17px;
   pointer-events: auto;
+}
+
+.map-stop-marker .map-marker.map-marker--current {
+  pointer-events: none;
+  cursor: default;
+  box-shadow:
+    0 0 0 3px rgba(141, 198, 232, 0.58),
+    0 3px 9px rgba(13, 30, 45, 0.3);
+}
+
+.map-stop-marker .map-marker.map-marker--current:hover {
+  transform: none;
+}
+
+.map-marker__icon,
+.map-marker__sequence {
+  pointer-events: none;
 }
 
 .map-stop-marker .map-marker::before {
@@ -54,6 +71,56 @@
   inset: 0;
 }
 
+.route-map__controls {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  overflow: hidden;
+  flex-direction: column;
+  border: 1px solid rgba(175, 193, 205, 0.88);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 4px 14px rgba(0, 36, 53, 0.14);
+}
+
+.route-map__control {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-bottom: 1px solid rgba(175, 193, 205, 0.88);
+  color: #183b50;
+  background: transparent;
+  cursor: pointer;
+  transition: color 150ms ease, background-color 150ms ease;
+}
+
+.route-map__control:last-child {
+  border-bottom: 0;
+}
+
+.route-map__control:hover {
+  color: #173b5b;
+  background: #eef6fa;
+}
+
+.route-map__control:focus-visible {
+  z-index: 1;
+  outline: 2px solid #173b5b;
+  outline-offset: -3px;
+}
+
+@media (pointer: coarse), (max-width: 760px) {
+  .route-map__control {
+    width: 44px;
+    height: 44px;
+  }
+}
+
 .route-map__fallback .map-fallback {
   min-height: 100%;
   padding: 28px;
@@ -67,18 +134,22 @@
 }
 
 .map-fallback__copy strong {
-  color: #183b50;
+  color: #0d1e2d;
   font-size: 15px;
 }
 
 .map-fallback__copy small {
-  color: #526a7e;
+  color: #475569;
   font-size: 12px;
   line-height: 1.45;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .map-stop-marker .map-marker {
+    transition: none;
+  }
+
+  .route-map__control {
     transition: none;
   }
 }

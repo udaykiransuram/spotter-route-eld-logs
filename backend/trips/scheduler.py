@@ -13,6 +13,9 @@ MAX_DRIVING_WINDOW_HOURS = 14.0
 BREAK_AFTER_DRIVING_HOURS = 8.0
 BREAK_DURATION_HOURS = 0.5
 DAILY_REST_HOURS = 10.0
+PRETRIP_INSPECTION_HOURS = 0.5
+REST_MEAL_BREAK_HOURS = 1.0
+SLEEPER_REST_HOURS = DAILY_REST_HOURS - REST_MEAL_BREAK_HOURS
 CYCLE_LIMIT_HOURS = 70.0
 CYCLE_RESTART_HOURS = 34.0
 FUEL_TARGET_MILES = 950.0
@@ -33,6 +36,7 @@ class _ClockState:
     break_driving: float
     cycle_used: float
     miles_since_fuel: float
+    pretrip_required: bool
 
 
 def schedule_route(
@@ -65,6 +69,7 @@ def schedule_route(
         break_driving=0.0,
         cycle_used=float(current_cycle_used_hours),
         miles_since_fuel=0.0,
+        pretrip_required=True,
     )
     events: list[DutyEvent] = []
     leg_index = 0
@@ -92,22 +97,30 @@ def schedule_route(
         # Check the cycle first so a simultaneous daily/cycle limit becomes
         # one 34-hour restart instead of a redundant 10-hour rest plus restart.
         if state.cycle_used >= CYCLE_LIMIT_HOURS - EPSILON:
+            _append_cycle_restart(events, state, locator)
+            continue
+
+        if state.pretrip_required:
+            # Inspect immediately before the driving shift. If the inspection
+            # would leave no cycle time to drive, restart first instead.
+            if state.cycle_used + PRETRIP_INSPECTION_HOURS >= CYCLE_LIMIT_HOURS - EPSILON:
+                _append_cycle_restart(events, state, locator)
+                continue
             _append_stationary(
                 events,
                 state,
                 locator,
-                status="off_duty",
-                event_type="cycle_restart",
-                duration_hours=CYCLE_RESTART_HOURS,
+                status="on_duty",
+                event_type="pretrip_inspection",
+                duration_hours=PRETRIP_INSPECTION_HOURS,
                 note=(
-                    "34-hour restart inserted by this planner's simplified model because "
-                    "the 70-hour cycle was exhausted."
+                    "30-minute pre-trip inspection before the driving shift (planning assumption)."
                 ),
             )
-            state.cycle_used = 0.0
-            state.daily_driving = 0.0
-            state.shift_elapsed = 0.0
+            state.shift_elapsed += PRETRIP_INSPECTION_HOURS
+            state.cycle_used += PRETRIP_INSPECTION_HOURS
             state.break_driving = 0.0
+            state.pretrip_required = False
             continue
 
         if (
@@ -119,18 +132,40 @@ def schedule_route(
                 if state.daily_driving >= MAX_DAILY_DRIVING_HOURS - EPSILON
                 else "14-hour driving window reached."
             )
+            # A restart also supplies the required daily rest. Prefer one
+            # combined 34-hour block when the next pre-trip could not leave
+            # any cycle time for driving.
+            if state.cycle_used + PRETRIP_INSPECTION_HOURS >= CYCLE_LIMIT_HOURS - EPSILON:
+                _append_cycle_restart(events, state, locator)
+                continue
             _append_stationary(
                 events,
                 state,
                 locator,
                 status="off_duty",
+                event_type="meal_break",
+                duration_hours=REST_MEAL_BREAK_HOURS,
+                note=(
+                    "One-hour meal/dinner break beginning 10 consecutive hours "
+                    f"of qualifying rest; {reason}"
+                ),
+            )
+            _append_stationary(
+                events,
+                state,
+                locator,
+                status="sleeper_berth",
                 event_type="rest",
-                duration_hours=DAILY_REST_HOURS,
-                note=f"10 consecutive hours off duty; {reason}",
+                duration_hours=SLEEPER_REST_HOURS,
+                note=(
+                    "Nine hours in the sleeper berth complete 10 consecutive hours "
+                    "of qualifying rest after the one-hour Off Duty meal/dinner break."
+                ),
             )
             state.daily_driving = 0.0
             state.shift_elapsed = 0.0
             state.break_driving = 0.0
+            state.pretrip_required = True
             continue
 
         if state.break_driving >= BREAK_AFTER_DRIVING_HOURS - EPSILON:
@@ -139,9 +174,9 @@ def schedule_route(
                 state,
                 locator,
                 status="off_duty",
-                event_type="break",
+                event_type="meal_break",
                 duration_hours=BREAK_DURATION_HOURS,
-                note="30-minute break after eight cumulative driving hours.",
+                note="30-minute Meal/rest break after eight cumulative driving hours.",
             )
             state.shift_elapsed += BREAK_DURATION_HOURS
             state.break_driving = 0.0
@@ -229,6 +264,31 @@ def schedule_route(
         raise SchedulingError("Scheduler exceeded its safety iteration limit")
 
     return events
+
+
+def _append_cycle_restart(
+    events: list[DutyEvent],
+    state: _ClockState,
+    locator: RouteLocator,
+) -> None:
+    _append_stationary(
+        events,
+        state,
+        locator,
+        status="off_duty",
+        event_type="cycle_restart",
+        duration_hours=CYCLE_RESTART_HOURS,
+        note=(
+            "34-hour restart inserted by this planner's simplified model because "
+            "the 70-hour cycle was exhausted or the remaining balance could not "
+            "support the required pre-trip inspection plus additional driving."
+        ),
+    )
+    state.cycle_used = 0.0
+    state.daily_driving = 0.0
+    state.shift_elapsed = 0.0
+    state.break_driving = 0.0
+    state.pretrip_required = True
 
 
 def _append_stationary(

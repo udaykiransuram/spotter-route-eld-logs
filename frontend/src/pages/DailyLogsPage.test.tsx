@@ -6,6 +6,7 @@ import { App } from "../App";
 import { PlanProvider } from "../state/plan-store";
 import { planStorageKey } from "../state/plan-storage";
 import { tripPlanFixture } from "../test/fixture";
+import { formatMiles } from "../lib/format";
 
 function renderLogs(plan = tripPlanFixture) {
   sessionStorage.setItem(planStorageKey, JSON.stringify({ version: 1, plan }));
@@ -19,12 +20,12 @@ describe("Daily logs page", () => {
 
     expect(await screen.findByRole("heading", { name: "Daily logs" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Aug 25 · Day 1/ })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("490 mi")).toBeInTheDocument();
+    expect(screen.getByText(formatMiles(tripPlanFixture.daily_logs[0].total_miles))).toBeInTheDocument();
     expect(screen.getByText("24.00 h")).toBeInTheDocument();
-    expect(screen.getByRole("progressbar", { name: "70-hour cycle used" })).toHaveAttribute("aria-valuenow", "39.5");
-    expect(screen.getByText("Sheet 1 of 2")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "70-hour cycle used" })).toHaveAttribute("aria-valuenow", String(tripPlanFixture.daily_logs[0].recap!.cycle_used_at_end));
+    expect(screen.getByText(`Sheet 1 of ${tripPlanFixture.daily_logs.length}`)).toBeInTheDocument();
     expect(screen.getByText("Generated trip plan — not a certified ELD record.")).toBeInTheDocument();
-    expect(screen.getAllByText(/Off duty → Driving/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/pre-trip inspection/i).length).toBeGreaterThan(0);
     const paperRegion = screen.getByRole("region", { name: "Driver's daily log sheet" });
     expect(paperRegion).toHaveAttribute("tabindex", "0");
     expect(paperRegion).toHaveAccessibleDescription("The paper log fits the screen. Use full screen to inspect small details.");
@@ -35,9 +36,9 @@ describe("Daily logs page", () => {
 
     await user.click(screen.getByRole("tab", { name: /Aug 26 · Day 2/ }));
     expect(screen.getByRole("tab", { name: /Aug 26 · Day 2/ })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("860 mi")).toBeInTheDocument();
-    expect(screen.getByText("13.50 h")).toBeInTheDocument();
-    expect(screen.getByText("Sheet 2 of 2")).toBeInTheDocument();
+    expect(screen.getByText(formatMiles(tripPlanFixture.daily_logs[1].total_miles))).toBeInTheDocument();
+    expect(screen.getAllByText(`${tripPlanFixture.daily_logs[1].status_totals.driving.toFixed(2)} h`).length).toBeGreaterThan(0);
+    expect(screen.getByText(`Sheet 2 of ${tripPlanFixture.daily_logs.length}`)).toBeInTheDocument();
   });
 
   it("supports previous/next navigation and printing", async () => {
@@ -47,17 +48,19 @@ describe("Daily logs page", () => {
     renderLogs();
 
     expect(await screen.findByRole("button", { name: "Previous day" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Next day" }));
+    for (let index = 1; index < tripPlanFixture.daily_logs.length; index += 1) {
+      await user.click(screen.getByRole("button", { name: "Next day" }));
+    }
     expect(screen.getByRole("button", { name: "Next day" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Print / Save PDF" }));
     expect(print).toHaveBeenCalledOnce();
-    expect(document.querySelectorAll(".print-log-page")).toHaveLength(2);
-    expect(document.querySelectorAll(".print-log-page .daily-log-template")).toHaveLength(2);
+    expect(document.querySelectorAll(".print-log-page")).toHaveLength(tripPlanFixture.daily_logs.length);
+    expect(document.querySelectorAll(".print-log-page .daily-log-template")).toHaveLength(tripPlanFixture.daily_logs.length);
     expect(document.querySelectorAll(".print-log-page image, .print-log-page foreignObject")).toHaveLength(0);
     for (const page of document.querySelectorAll(".print-log-page")) {
       expect(page.querySelectorAll(":scope > .log-sheet > svg")).toHaveLength(1);
     }
-    expect(document.querySelectorAll(".print-all-logs > *")).toHaveLength(2);
+    expect(document.querySelectorAll(".print-all-logs > *")).toHaveLength(tripPlanFixture.daily_logs.length);
     window.dispatchEvent(new Event("afterprint"));
     await waitFor(() => expect(document.querySelectorAll(".print-log-page")).toHaveLength(0));
   });
@@ -66,12 +69,13 @@ describe("Daily logs page", () => {
     const user = userEvent.setup();
     renderLogs();
     const firstTab = await screen.findByRole("tab", { name: /Aug 25 · Day 1/ });
-    const lastTab = screen.getByRole("tab", { name: /Aug 26 · Day 2/ });
+    const secondTab = screen.getByRole("tab", { name: /Aug 26 · Day 2/ });
+    const lastTab = screen.getByRole("tab", { name: /Aug 27 · Day 3/ });
 
     firstTab.focus();
     await user.keyboard("{ArrowRight}");
-    expect(lastTab).toHaveFocus();
-    expect(lastTab).toHaveAttribute("aria-selected", "true");
+    expect(secondTab).toHaveFocus();
+    expect(secondTab).toHaveAttribute("aria-selected", "true");
 
     await user.keyboard("{Home}");
     expect(firstTab).toHaveFocus();
@@ -93,7 +97,6 @@ describe("Daily logs page", () => {
       vehicle_number: "V".repeat(80),
       shipping_document_number: "S".repeat(100),
     };
-    const thirdLog = { ...tripPlanFixture.daily_logs[1], date: "2026-08-27" };
     renderLogs({
       ...tripPlanFixture,
       metadata: longMetadata,
@@ -101,7 +104,7 @@ describe("Daily logs page", () => {
         ...tripPlanFixture.request!,
         metadata: longMetadata,
       },
-      daily_logs: [...tripPlanFixture.daily_logs, thirdLog],
+      daily_logs: tripPlanFixture.daily_logs,
     });
 
     const metadataSection = (await screen.findByRole("heading", { name: "Driver, carrier & document details" })).closest("section");
@@ -109,8 +112,8 @@ describe("Daily logs page", () => {
     expect(within(metadataSection as HTMLElement).getByText(longTerminal)).toBeInTheDocument();
     expect(document.querySelectorAll(".print-log-page")).toHaveLength(0);
     window.dispatchEvent(new Event("beforeprint"));
-    expect(document.querySelectorAll(".print-log-page")).toHaveLength(3);
-    expect(document.querySelectorAll(".print-all-logs > *")).toHaveLength(3);
+    expect(document.querySelectorAll(".print-log-page")).toHaveLength(tripPlanFixture.daily_logs.length);
+    expect(document.querySelectorAll(".print-all-logs > *")).toHaveLength(tripPlanFixture.daily_logs.length);
     for (const page of document.querySelectorAll(".print-log-page")) {
       expect(page.querySelectorAll(":scope > .log-sheet > svg")).toHaveLength(1);
     }

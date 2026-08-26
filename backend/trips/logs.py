@@ -21,6 +21,11 @@ STATUSES: tuple[DutyStatus, ...] = (
     "driving",
     "on_duty",
 )
+PAPER_RECAP_CYCLE_LIMIT_HOURS = 70.0
+PAPER_RECAP_ESTIMATE_BASIS = (
+    "Conservative 70-hour/8-day estimate: no prior hours are assumed to age out "
+    "before a scheduled 34-hour restart."
+)
 
 
 def build_daily_logs(
@@ -70,6 +75,11 @@ def build_daily_logs(
         status_totals = _status_totals(segments)
         cycle_start = _cycle_at(events, day_start.astimezone(UTC), initial_cycle_used_hours)
         cycle_end = _cycle_at(events, day_end.astimezone(UTC), initial_cycle_used_hours)
+        rounded_cycle_end = round(cycle_end, 2)
+        estimated_available = round(
+            max(0.0, PAPER_RECAP_CYCLE_LIMIT_HOURS - cycle_end),
+            2,
+        )
         restart_completed = any(
             event.event_type == "cycle_restart"
             and day_start.astimezone(UTC) < event.end_at.astimezone(UTC) <= day_end.astimezone(UTC)
@@ -103,13 +113,18 @@ def build_daily_logs(
                 "total_miles": round(raw_miles, 2),
                 "status_totals": status_totals,
                 "grid_note": _grid_note(day_start, day_end),
-                "cycle_used_hours": round(cycle_end, 2),
+                "cycle_used_hours": rounded_cycle_end,
                 "recap": {
                     "on_duty_today": round(_elapsed_on_duty_hours(touching, day_start, day_end), 2),
                     "cycle_used_at_start": round(cycle_start, 2),
-                    "cycle_used_at_end": round(cycle_end, 2),
-                    "remaining_cycle_hours": round(max(0.0, 70.0 - cycle_end), 2),
+                    "cycle_used_at_end": rounded_cycle_end,
+                    "remaining_cycle_hours": estimated_available,
                     "restart_completed": restart_completed,
+                    "seventy_hour_a": rounded_cycle_end,
+                    "seventy_hour_b": estimated_available,
+                    "seventy_hour_c": rounded_cycle_end,
+                    "estimated": True,
+                    "estimate_basis": PAPER_RECAP_ESTIMATE_BASIS,
                 },
                 "segments": segments,
                 "remarks": remarks,
@@ -379,6 +394,7 @@ def _remarks_for_day(
         if local_start.date() == day:
             remark_at = event.start_at
             note = event.note
+            activity = _remark_activity(event)
             location = _location_at(
                 event,
                 event.start_at,
@@ -388,6 +404,7 @@ def _remarks_for_day(
         else:
             remark_at = day_start
             note = f"Continued: {event.note}"
+            activity = f"Continued {_remark_activity(event).lower()}"
             location = _location_at(
                 event,
                 day_start,
@@ -403,6 +420,7 @@ def _remarks_for_day(
                 "minute": round(minute, 3),
                 "status": event.status,
                 "location": location,
+                "activity": activity,
                 "note": note,
                 "timezone_abbreviation": local_remark_at.tzname() or "",
             }
@@ -426,11 +444,32 @@ def _remarks_for_day(
                 "minute": round(completion_minute, 3),
                 "status": "off_duty",
                 "location": final_location,
+                "activity": "Trip complete",
                 "note": "Trip complete; Off Duty.",
                 "timezone_abbreviation": completion.tzname() or "",
             }
         )
     return remarks
+
+
+def _remark_activity(event: DutyEvent) -> str:
+    if event.event_type == "pretrip_inspection":
+        return "Pre-trip inspection"
+    if event.event_type == "driving":
+        return "Driving"
+    if event.event_type == "pickup":
+        return "Pickup"
+    if event.event_type == "dropoff":
+        return "Drop-off"
+    if event.event_type == "fuel":
+        return "Fueling"
+    if event.event_type in {"break", "meal_break"}:
+        return "Meal/dinner break" if "dinner" in event.note.lower() else "Meal/rest break"
+    if event.event_type == "rest":
+        return "Sleeper berth"
+    if event.event_type == "cycle_restart":
+        return "Cycle restart"
+    return "Duty-status change"
 
 
 def _cycle_at(events: list[DutyEvent], cutoff: datetime, initial_cycle_used_hours: float) -> float:

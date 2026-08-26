@@ -104,6 +104,7 @@ def test_short_trip_only_has_required_waypoint_work() -> None:
     events = schedule_route(route, DEPARTURE, 0)
 
     assert [event.event_type for event in events] == [
+        "pretrip_inspection",
         "driving",
         "pickup",
         "driving",
@@ -113,18 +114,27 @@ def test_short_trip_only_has_required_waypoint_work() -> None:
     assert [
         event.duration_hours for event in events if event.event_type in {"pickup", "dropoff"}
     ] == [1, 1]
+    assert events[0].status == "on_duty"
+    assert events[0].duration_hours == pytest.approx(0.5)
+    assert events[-1].event_type == "dropoff"
+    assert not any(event.event_type.startswith("posttrip") for event in events)
 
 
 def test_pickup_at_eight_hours_satisfies_break() -> None:
     events = schedule_route(make_route(8, 2), DEPARTURE, 0)
 
-    assert [event.event_type for event in events[:3]] == ["driving", "pickup", "driving"]
-    assert not any(event.event_type == "break" for event in events)
+    assert [event.event_type for event in events[:4]] == [
+        "pretrip_inspection",
+        "driving",
+        "pickup",
+        "driving",
+    ]
+    assert not any(event.event_type in {"break", "meal_break"} for event in events)
 
 
 def test_dedicated_break_is_inserted_after_eight_driving_hours() -> None:
     events = schedule_route(make_route(1, 10), DEPARTURE, 0)
-    break_event = next(event for event in events if event.event_type == "break")
+    break_event = next(event for event in events if event.event_type == "meal_break")
 
     previous_pickup = next(event for event in events if event.event_type == "pickup")
     driving_since_pickup = sum(
@@ -137,14 +147,29 @@ def test_dedicated_break_is_inserted_after_eight_driving_hours() -> None:
     assert driving_since_pickup == pytest.approx(8)
     assert break_event.duration_hours == pytest.approx(0.5)
     assert break_event.status == "off_duty"
+    assert "Meal/rest" in break_event.note
 
 
 def test_eleven_hour_limit_requires_ten_hour_rest() -> None:
     events = schedule_route(make_route(2, 12), DEPARTURE, 0)
-    rest = next(event for event in events if event.event_type == "rest")
+    meal_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "meal_break" and "beginning 10 consecutive" in event.note
+    )
+    meal, sleeper, pretrip = events[meal_index : meal_index + 3]
 
-    assert rest.duration_hours == pytest.approx(10)
-    assert "11-hour" in rest.note
+    assert meal.status == "off_duty"
+    assert meal.duration_hours == pytest.approx(1)
+    assert "11-hour" in meal.note
+    assert sleeper.event_type == "rest"
+    assert sleeper.status == "sleeper_berth"
+    assert sleeper.duration_hours == pytest.approx(9)
+    assert pretrip.event_type == "pretrip_inspection"
+    assert pretrip.status == "on_duty"
+    assert pretrip.duration_hours == pytest.approx(0.5)
+    assert meal.end_at == sleeper.start_at
+    assert sleeper.end_at == pretrip.start_at
 
 
 def test_waypoint_snap_never_increases_drive_past_eleven_hour_limit() -> None:
@@ -179,6 +204,7 @@ def test_tiny_positive_second_leg_always_reaches_dropoff() -> None:
     events = schedule_route(route, DEPARTURE, 0)
 
     assert [event.event_type for event in events] == [
+        "pretrip_inspection",
         "driving",
         "pickup",
         "driving",
@@ -191,10 +217,14 @@ def test_fourteen_hour_window_can_bind_before_driving_limit() -> None:
     # High synthetic speed creates enough 950-mile on-duty fuel events for the
     # 14-hour window to bind before 11 driving hours. This isolates that clock.
     events = schedule_route(make_route(0.1, 12, speed=1000), DEPARTURE, 0)
-    rests = [event for event in events if event.event_type == "rest"]
+    rest_meals = [
+        event
+        for event in events
+        if event.event_type == "meal_break" and "beginning 10 consecutive" in event.note
+    ]
 
-    assert rests
-    assert any("14-hour" in event.note for event in rests)
+    assert rest_meals
+    assert any("14-hour" in event.note for event in rest_meals)
 
 
 def test_cycle_at_seventy_starts_with_one_restart() -> None:
@@ -202,29 +232,60 @@ def test_cycle_at_seventy_starts_with_one_restart() -> None:
 
     assert events[0].event_type == "cycle_restart"
     assert events[0].duration_hours == pytest.approx(34)
-    assert events[1].status == "driving"
+    assert events[1].event_type == "pretrip_inspection"
+    assert events[2].status == "driving"
+
+
+def test_cycle_without_room_for_pretrip_and_driving_restarts_first() -> None:
+    events = schedule_route(make_route(1, 1), DEPARTURE, 69.5)
+
+    assert [event.event_type for event in events[:3]] == [
+        "cycle_restart",
+        "pretrip_inspection",
+        "driving",
+    ]
+
+
+def test_on_duty_pickup_can_exceed_cycle_but_no_more_driving_occurs() -> None:
+    events = schedule_route(make_route(0.5, 1), DEPARTURE, 69)
+    restart_index = next(
+        index for index, event in enumerate(events) if event.event_type == "cycle_restart"
+    )
+
+    assert events[restart_index - 1].event_type == "pickup"
+    assert sum(
+        event.duration_hours
+        for event in events[:restart_index]
+        if event.status in {"driving", "on_duty"}
+    ) + 69 == pytest.approx(71)
+    assert events[restart_index + 1].event_type == "pretrip_inspection"
+    assert events[restart_index + 2].status == "driving"
 
 
 def test_cycle_exhaustion_mid_drive_restarts_before_more_driving() -> None:
-    events = schedule_route(make_route(1, 1), DEPARTURE, 69.8)
+    events = schedule_route(make_route(1, 1), DEPARTURE, 69.4)
     restart_index = next(
         index for index, event in enumerate(events) if event.event_type == "cycle_restart"
     )
 
     assert events[restart_index - 1].status == "driving"
-    assert events[restart_index - 1].duration_hours == pytest.approx(0.2)
-    assert events[restart_index + 1].status == "driving"
+    assert events[restart_index - 1].duration_hours == pytest.approx(0.1)
+    assert events[restart_index + 1].event_type == "pretrip_inspection"
+    assert events[restart_index + 2].status == "driving"
 
 
 def test_simultaneous_daily_and_cycle_limits_use_only_restart() -> None:
-    events = schedule_route(make_route(1, 12), DEPARTURE, 58)
+    events = schedule_route(make_route(1, 12), DEPARTURE, 57.5)
     restart_index = next(
         index for index, event in enumerate(events) if event.event_type == "cycle_restart"
     )
 
     assert events[restart_index - 1].status == "driving"
-    assert events[restart_index + 1].status == "driving"
-    assert not (restart_index > 0 and events[restart_index - 1].event_type == "rest")
+    assert events[restart_index + 1].event_type == "pretrip_inspection"
+    assert events[restart_index + 2].status == "driving"
+    assert not any(
+        event.event_type == "rest" for event in events[max(0, restart_index - 2) : restart_index]
+    )
 
 
 def test_multiple_fuel_stops_keep_every_gap_below_one_thousand_miles() -> None:
@@ -249,7 +310,7 @@ def test_fueling_at_eight_hours_satisfies_break_requirement() -> None:
     )
     assert driving_before_fuel == pytest.approx(8)
     assert fuel.duration_hours == pytest.approx(0.5)
-    assert not any(event.event_type == "break" for event in events)
+    assert not any(event.event_type in {"break", "meal_break"} for event in events)
 
 
 @pytest.mark.parametrize("cycle_used", [0, 42.5, 69.9, 70])
@@ -266,7 +327,7 @@ def test_timeline_invariants(cycle_used: float) -> None:
     shift = 0.0
     break_driving = 0.0
     cycle = cycle_used
-    for event in events:
+    for index, event in enumerate(events):
         if event.status == "driving":
             assert daily_driving + event.duration_hours <= 11 + 1e-6
             assert shift + event.duration_hours <= 14 + 1e-6
@@ -276,15 +337,19 @@ def test_timeline_invariants(cycle_used: float) -> None:
             shift += event.duration_hours
             break_driving += event.duration_hours
             cycle += event.duration_hours
-        elif event.event_type in {"pickup", "dropoff", "fuel"}:
+        elif event.status == "on_duty":
             shift += event.duration_hours
             cycle += event.duration_hours
             if event.duration_hours >= 0.5:
                 break_driving = 0.0
-        elif event.event_type == "break":
+        elif event.event_type in {"break", "meal_break"}:
             shift += event.duration_hours
             break_driving = 0.0
         elif event.event_type == "rest":
+            previous = events[index - 1]
+            assert previous.event_type == "meal_break"
+            assert previous.duration_hours + event.duration_hours == pytest.approx(10)
+            assert event.status == "sleeper_berth"
             daily_driving = shift = break_driving = 0.0
         elif event.event_type == "cycle_restart":
             daily_driving = shift = break_driving = cycle = 0.0

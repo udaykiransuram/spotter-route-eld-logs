@@ -34,7 +34,7 @@ export const AssumptionsPanel = memo(function AssumptionsPanel({ assumptions, wa
                 alignItems: "flex-start",
                 borderRadius: 0,
                 backgroundColor: "transparent",
-                color: "#2d435a",
+                color: "var(--ink)",
                 fontSize: 12,
                 fontWeight: 450,
                 lineHeight: 1.4,

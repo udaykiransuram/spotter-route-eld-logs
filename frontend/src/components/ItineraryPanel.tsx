@@ -6,6 +6,7 @@ import { useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { dutyStatusLabels, formatDayLabel, formatDuration, formatTime, stopTypeLabels } from "../lib/format";
 import type { ScheduledStop, TripPlan } from "../types";
+import { StopTypeIcon } from "./stop-type-icon";
 
 interface ItineraryPanelProps {
   plan: TripPlan;
@@ -62,6 +63,12 @@ function localDateForIso(iso: string, timezone?: string) {
 export function ItineraryPanel({ plan, selectedStopId, onSelectStop }: ItineraryPanelProps) {
   const timezone = plan.daily_logs[0]?.timezone;
   const grouped = useMemo(() => groupStopsByDay(plan.stops, timezone), [plan.stops, timezone]);
+  const pretripByStart = useMemo(() => new Map(
+    plan.duty_events
+      .filter((event) => event.event_type === "pretrip_inspection")
+      .map((event) => [event.start_at, event]),
+  ), [plan.duty_events]);
+  const initialPretrip = pretripByStart.get(plan.summary.departure_at);
   const arrivalDate = useMemo(
     () => localDateForIso(plan.summary.arrival_at, timezone),
     [plan.summary.arrival_at, timezone],
@@ -71,6 +78,7 @@ export function ItineraryPanel({ plan, selectedStopId, onSelectStop }: Itinerary
 
   useEffect(() => {
     if (!selectedStopId) return;
+    if (window.matchMedia("(max-width: 760px)").matches) return;
     document.getElementById(`itinerary-stop-${selectedStopId}`)?.scrollIntoView({
       block: "nearest",
       behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
@@ -88,12 +96,13 @@ export function ItineraryPanel({ plan, selectedStopId, onSelectStop }: Itinerary
       <div className="itinerary-panel__header">
         <h2 id="route-plan-title">Route plan</h2>
         <Button
-          className="secondary-button secondary-button--compact"
+          className="primary-button secondary-button--compact itinerary-panel__logs-link"
           component={Link}
+          disableElevation
           onFocus={preloadDailyLogs}
           onMouseEnter={preloadDailyLogs}
           to="/logs"
-          variant="outlined"
+          variant="contained"
         >
           <FileText size={16} aria-hidden="true" /> View daily logs ({plan.daily_logs.length})
         </Button>
@@ -101,8 +110,18 @@ export function ItineraryPanel({ plan, selectedStopId, onSelectStop }: Itinerary
 
       <div className="itinerary" aria-label="Scheduled route stops">
         <div className="itinerary-start">
-          <span className="stop-number">S</span>
-          <span><strong>Current location</strong><small>{plan.request?.current_location.label ?? plan.duty_events[0]?.start_location}</small></span>
+          <span aria-hidden="true" className="stop-number">
+            <StopTypeIcon type="start" />
+          </span>
+          <span>
+            <strong>Current location</strong>
+            <small>{plan.request?.current_location.label ?? plan.duty_events[0]?.start_location}</small>
+            {initialPretrip ? (
+              <span className="itinerary-activity">
+                Pre-trip inspection · {formatDuration((initialPretrip.duration_hours ?? 0.5) * 60)} · On Duty
+              </span>
+            ) : null}
+          </span>
           <time>{formatTime(plan.summary.departure_at, timezone)}</time>
         </div>
         {grouped.map((day) => {
@@ -111,7 +130,9 @@ export function ItineraryPanel({ plan, selectedStopId, onSelectStop }: Itinerary
           return (
           <section className="itinerary-day" key={day.date}>
             <h3>Day {dayNumber} · {formatDayLabel(day.date)}</h3>
-            {day.stops.map((stop) => (
+            {day.stops.map((stop) => {
+              const followingPretrip = stop.end_at ? pretripByStart.get(stop.end_at) : undefined;
+              return (
               <ButtonBase
                 id={`itinerary-stop-${stop.id}`}
                 className={`itinerary-stop ${selectedStopId === stop.id ? "itinerary-stop--selected" : ""}`}
@@ -120,25 +141,38 @@ export function ItineraryPanel({ plan, selectedStopId, onSelectStop }: Itinerary
                 onClick={() => onSelectStop(stop.id)}
                 aria-pressed={selectedStopId === stop.id}
               >
-                <span className={`stop-number stop-number--${stop.type}`}>{stop.sequence}</span>
+                <span aria-hidden="true" className={`stop-number stop-number--${stop.type}`}>
+                  <StopTypeIcon type={stop.type} />
+                  <span className="stop-number__sequence">{stop.sequence}</span>
+                </span>
                 <span className="itinerary-stop__main">
                   <strong>{stopTypeLabels[stop.type]}</strong>
                   <small>{stop.label}</small>
                   <span className="itinerary-stop__reason">{stop.reason}</span>
+                  {followingPretrip ? (
+                    <span className="itinerary-activity">
+                      Next shift: Pre-trip inspection · {formatDuration((followingPretrip.duration_hours ?? 0.5) * 60)} · On Duty
+                    </span>
+                  ) : null}
                 </span>
                 <span className="itinerary-stop__meta">
                   <time>{formatTime(stop.scheduled_at, timezone)}</time>
                   <small>{formatDuration(stop.duration_minutes)}</small>
-                  <em className={`status-tag status-tag--${stop.duty_status}`}>{dutyStatusLabels[stop.duty_status]}</em>
+                  <em className={`status-tag ${stop.type === "rest" ? "status-tag--mixed" : `status-tag--${stop.duty_status}`}`}>
+                    {stop.type === "rest" ? "Off Duty + Sleeper" : dutyStatusLabels[stop.duty_status]}
+                  </em>
                 </span>
               </ButtonBase>
-            ))}
+              );
+            })}
           </section>
           );
         })}
         {lastStopDate !== arrivalDate ? <h3 className="itinerary-final-day">Day {arrivalDayIndex + 1} · {formatDayLabel(arrivalDate)}</h3> : null}
         <div className="itinerary-end">
-          <span className="stop-number stop-number--finish" aria-hidden="true">✓</span>
+          <span className="stop-number stop-number--finish" aria-hidden="true">
+            <StopTypeIcon type="finish" />
+          </span>
           <span><strong>End of trip</strong><small>{plan.request?.dropoff_location.label ?? plan.duty_events.at(-1)?.end_location}</small></span>
           <time>{formatTime(plan.summary.arrival_at, timezone)}</time>
         </div>

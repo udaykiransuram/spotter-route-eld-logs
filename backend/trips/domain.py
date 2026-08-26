@@ -10,10 +10,12 @@ from typing import Literal
 DutyStatus = Literal["off_duty", "sleeper_berth", "driving", "on_duty"]
 EventType = Literal[
     "driving",
+    "pretrip_inspection",
     "pickup",
     "dropoff",
     "fuel",
     "break",
+    "meal_break",
     "rest",
     "cycle_restart",
 ]

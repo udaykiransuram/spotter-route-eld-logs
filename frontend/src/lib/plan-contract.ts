@@ -18,7 +18,18 @@ const dutyStatuses = new Set<DutyStatus>([
   "driving",
   "on_duty",
 ]);
-const stopTypes = new Set(["pickup", "dropoff", "fuel", "break", "rest", "cycle_restart"]);
+// Legacy `break` remains valid so a v1 plan saved before the duty-model
+// refinement can still be restored from sessionStorage.
+const stopTypes = new Set([
+  "pickup",
+  "dropoff",
+  "fuel",
+  "break",
+  "meal_break",
+  "rest",
+  "cycle_restart",
+  "pretrip_inspection",
+]);
 const eventTypes = new Set(["driving", ...stopTypes]);
 const metadataKeys: readonly (keyof TripMetadata)[] = [
   "driver_name",
@@ -158,10 +169,35 @@ function isDailyLog(value: unknown): value is DailyLog {
   const recapValid = value.recap === undefined || (
     isRecord(value.recap)
     && isFiniteNumber(value.recap.on_duty_today)
+    && value.recap.on_duty_today >= 0
     && isFiniteNumber(value.recap.cycle_used_at_start)
+    && value.recap.cycle_used_at_start >= 0
     && isFiniteNumber(value.recap.cycle_used_at_end)
+    && value.recap.cycle_used_at_end >= 0
     && isFiniteNumber(value.recap.remaining_cycle_hours)
+    && value.recap.remaining_cycle_hours >= 0
+    && value.recap.remaining_cycle_hours <= 70
     && typeof value.recap.restart_completed === "boolean"
+    && (() => {
+      const estimateValues = [
+        value.recap.seventy_hour_a,
+        value.recap.seventy_hour_b,
+        value.recap.seventy_hour_c,
+        value.recap.estimated,
+        value.recap.estimate_basis,
+      ];
+      if (estimateValues.every((estimateValue) => estimateValue === undefined)) return true;
+      return isFiniteNumber(value.recap.seventy_hour_a)
+        && value.recap.seventy_hour_a >= 0
+        && isFiniteNumber(value.recap.seventy_hour_b)
+        && value.recap.seventy_hour_b >= 0
+        && value.recap.seventy_hour_b <= 70
+        && isFiniteNumber(value.recap.seventy_hour_c)
+        && value.recap.seventy_hour_c >= 0
+        && typeof value.recap.estimated === "boolean"
+        && isString(value.recap.estimate_basis)
+        && value.recap.estimate_basis.trim().length > 0;
+    })()
   );
   return isString(value.date)
     && isString(value.timezone)
@@ -172,7 +208,6 @@ function isDailyLog(value: unknown): value is DailyLog {
     && value.total_miles >= 0
     && isFiniteNumber(value.cycle_used_hours)
     && value.cycle_used_hours >= 0
-    && value.cycle_used_hours <= 70
     && [...dutyStatuses].every((status) => isFiniteNumber(totals[status]))
     && Math.abs(totalHours - 24) < 0.011
     && segmentsValid
@@ -186,6 +221,7 @@ function isDailyLog(value: unknown): value is DailyLog {
       && (remark.timezone_abbreviation === undefined || isString(remark.timezone_abbreviation))
       && isDutyStatus(remark.status)
       && isString(remark.location)
+      && (remark.activity === undefined || isString(remark.activity))
       && isString(remark.note)
     ));
 }

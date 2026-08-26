@@ -32,7 +32,7 @@ def test_cross_midnight_logs_are_complete_and_reconcile_mileage() -> None:
 
 
 def test_log_grid_uses_home_terminal_timezone_for_aware_departure() -> None:
-    departure = datetime.fromisoformat("2026-08-26T03:30:00+00:00")
+    departure = datetime.fromisoformat("2026-08-26T03:00:00+00:00")
     route = make_route(1, 1)
     events = schedule_route(route, departure, 0)
     logs = build_daily_logs(events, "America/New_York", route, 0)
@@ -50,10 +50,20 @@ def test_cycle_recap_is_reset_aware() -> None:
     events = schedule_route(route, departure, 70)
     logs = build_daily_logs(events, "America/Chicago", route, 70)
 
-    assert logs[0]["recap"]["cycle_used_at_start"] == 70
+    first_recap = logs[0]["recap"]
+    assert first_recap["cycle_used_at_start"] == 70
+    assert first_recap["seventy_hour_a"] == 70
+    assert first_recap["seventy_hour_b"] == 0
+    assert first_recap["seventy_hour_c"] == 70
     assert any(log["recap"]["restart_completed"] for log in logs)
-    assert logs[-1]["recap"]["cycle_used_at_end"] == pytest.approx(4)
-    assert logs[-1]["recap"]["remaining_cycle_hours"] == pytest.approx(66)
+    final_recap = logs[-1]["recap"]
+    assert final_recap["cycle_used_at_end"] == pytest.approx(4.5)
+    assert final_recap["remaining_cycle_hours"] == pytest.approx(65.5)
+    assert final_recap["seventy_hour_a"] == pytest.approx(4.5)
+    assert final_recap["seventy_hour_b"] == pytest.approx(65.5)
+    assert final_recap["seventy_hour_c"] == pytest.approx(4.5)
+    assert final_recap["estimated"] is True
+    assert "no prior hours are assumed to age out" in final_recap["estimate_basis"]
 
 
 def test_remarks_include_continued_status_at_midnight() -> None:
@@ -95,23 +105,60 @@ def test_tiny_multi_day_route_rounding_never_makes_a_sheet_negative() -> None:
     assert sum(log_cents) == target_cents
 
 
-def test_post_trip_off_duty_trace_has_matching_accessible_remark() -> None:
+def test_projected_off_duty_after_dropoff_has_matching_accessible_remark() -> None:
     departure = datetime(2026, 8, 25, 6, tzinfo=ZoneInfo("America/Chicago"))
     route = make_route(1, 1)
     events = schedule_route(route, departure, 0)
     log = build_daily_logs(events, "America/Chicago", route, 0)[0]
 
+    assert events[-1].event_type == "dropoff"
+    assert not any(event.event_type.startswith("posttrip") for event in events)
     completion_remark = log["remarks"][-1]
     assert completion_remark["status"] == "off_duty"
     assert completion_remark["location"] == "Drop-off"
+    assert completion_remark["activity"] == "Trip complete"
     assert completion_remark["note"] == "Trip complete; Off Duty."
     assert completion_remark["minute"] == log["segments"][-1]["start_minute"]
+
+
+def test_remarks_name_the_activity_and_location_for_each_duty_change() -> None:
+    departure = datetime(2026, 8, 25, 6, tzinfo=ZoneInfo("America/Chicago"))
+    route = make_route(2, 3)
+    events = schedule_route(route, departure, 0)
+    remarks = [
+        remark
+        for log in build_daily_logs(events, "America/Chicago", route, 0)
+        for remark in log["remarks"]
+    ]
+
+    pretrip = next(remark for remark in remarks if remark["activity"] == "Pre-trip inspection")
+    pickup = next(remark for remark in remarks if remark["activity"] == "Pickup")
+
+    assert pretrip["location"] == "Current"
+    assert pickup["location"] == "Pickup"
+    assert all(remark["activity"] and remark["location"] for remark in remarks)
+
+
+def test_on_duty_work_above_seventy_is_visible_until_restart_completes() -> None:
+    departure = datetime(2026, 8, 25, 23, tzinfo=UTC)
+    route = make_route(0.5, 1)
+    events = schedule_route(route, departure, 69)
+
+    logs = build_daily_logs(events, "UTC", route, 69)
+
+    over_limit = next(log for log in logs if log["recap"]["cycle_used_at_end"] > 70)
+    assert over_limit["date"] == "2026-08-26"
+    assert over_limit["recap"]["cycle_used_at_end"] == pytest.approx(71)
+    assert over_limit["recap"]["remaining_cycle_hours"] == 0
+    assert over_limit["recap"]["restart_completed"] is False
+    assert logs[-1]["recap"]["restart_completed"] is True
+    assert logs[-1]["recap"]["cycle_used_at_end"] == pytest.approx(2.5)
 
 
 @pytest.mark.parametrize("timezone_name", ["UTC", "America/New_York"])
 def test_exact_midnight_completion_stays_on_prior_sheet(timezone_name: str) -> None:
     zone = ZoneInfo(timezone_name)
-    departure = datetime(2026, 8, 25, 20, tzinfo=zone)
+    departure = datetime(2026, 8, 25, 19, 30, tzinfo=zone)
     route = make_route(1, 1)
     events = schedule_route(route, departure, 0)
 

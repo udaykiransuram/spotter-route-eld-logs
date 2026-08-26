@@ -1,6 +1,6 @@
 # Route & ELD Logs
 
-A stateless Django and React assessment app that builds a heavy-truck route from the driver's current location through pickup to drop-off, schedules fuel/break/rest events under the stated property-carrying HOS assumptions, and renders one filled paper-style daily log for every calendar day touched by the trip.
+A stateless Django and React assessment app that builds a heavy-truck route from the driver's current location through pickup to drop-off, schedules pre-trip/fuel/break/rest events under the stated property-carrying HOS assumptions, and renders one filled paper-style daily log for every calendar day touched by the trip.
 
 > Generated trip plan — not a certified ELD record.
 
@@ -12,7 +12,7 @@ A stateless Django and React assessment app that builds a heavy-truck route from
 - Deterministic demo routing when no Geoapify key is configured, so reviewers can run the complete flow offline.
 - MapLibre with a calmly restyled OpenFreeMap Liberty basemap and visible provider attribution.
 - Intent-based loading for the route map and log screens, print-only SVG rendering, cached autocomplete results, and bounded concurrent optional stop lookups.
-- One canonical `DutyEvent` sequence used by the stops, itinerary, summary, and daily log projections.
+- One canonical `DutyEvent` sequence projected into the stops, itinerary, summary, and daily logs. Log-only pre-trips stay off the map, and the contiguous meal-plus-sleeper pair is represented by one 10-hour geographic rest stop.
 - Reverse-geocoded city/state labels shared across adjacent duty events and midnight log continuations, while nearby fuel stations remain suggestions rather than unmodeled route detours.
 - A code-native SVG recreation of the supplied paper-log layout, with sharp vector labels, rules, duty traces, fullscreen viewing, and print/PDF controls. The original `blank-paper-log.png` remains only as the visual reference.
 
@@ -75,9 +75,11 @@ The form starts with a review-ready example:
 - Drop-off: Dallas, TX
 - Current cycle used: 30 hours
 
-Keep the selected defaults or search and choose an unambiguous U.S. autocomplete result for each location, then choose **Generate route & logs**. Leaving departure blank starts the trip at the current time in the detected home-terminal timezone. UTC is used only when timezone detection is unavailable. The deterministic route is intentionally long enough to demonstrate breaks, a 10-hour rest, a fuel stop, multiple dates, and filled daily sheets.
+Keep the selected defaults or search and choose an unambiguous U.S. autocomplete result for each location, then choose **Generate route & logs**. Leaving plan start blank begins the schedule at the current time in the detected home-terminal timezone. The pre-trip begins then when cycle time is available; otherwise the required restart begins first. UTC is used only when timezone detection is unavailable. The deterministic route is intentionally long enough to demonstrate breaks, a one-hour meal/dinner period followed by nine hours in the sleeper berth, a fuel stop, multiple dates, and filled daily sheets.
 
-**Current cycle used** means the driver's combined driving and On Duty—not driving hours already consumed in the simplified 70-hour/8-day cycle at departure. Entering `0` leaves all 70 hours available; entering `70` leaves none and causes the scheduler to place a 34-hour restart before further driving. This is a starting aggregate, not a reconstruction of the driver's prior eight daily records.
+**Current cycle used** is a capped planning balance for the driver's combined driving and On Duty—not driving hours already consumed in the simplified 70-hour/8-day cycle at plan start. Entering `0` leaves all 70 hours available; enter `70` when the actual total is 70 hours or more, which causes the scheduler to place a 34-hour restart before further driving. This is a starting aggregate, not a reconstruction of the driver's prior eight daily records.
+
+> **Estimated paper-log recap:** Because the form receives only that starting aggregate, the 70-hour/8-day A/B/C recap uses a conservative planning assumption. No starting hours are treated as aging out during the trip: A and C equal the projected cycle hours used at the end of the log day, while B equals `max(0, 70 - A)`. On Duty work can make A/C exceed 70 even though no further driving is allowed. A scheduled 34-hour restart resets the estimate. The unused 60-hour/7-day recap is marked `N/A`. These values estimate the remaining 70-hour balance; they do not reconstruct certified historical logs.
 
 ## Architecture
 
@@ -151,7 +153,7 @@ Request:
 }
 ```
 
-The form normally omits `departure_at` and `home_terminal_timezone`, so the API uses the current time in an IANA timezone detected from the starting location. UTC is the explicit fallback when detection is unavailable. A user may enter a later local departure or override the timezone. A local time that occurs twice at the end of daylight saving time must include its UTC offset (for example, `-04:00` or `-05:00`) so the intended instant is unambiguous.
+The form normally omits `departure_at` and `home_terminal_timezone`, so the API uses the current time in an IANA timezone detected from the starting location. `departure_at` is the plan start. The pre-trip begins then when cycle time is available; a required cycle restart can come first. UTC is the explicit fallback when detection is unavailable. A user may enter a later local plan start or override the timezone. A local time that occurs twice at the end of daylight saving time must include its UTC offset (for example, `-04:00` or `-05:00`) so the intended instant is unambiguous.
 
 The response contains route GeoJSON, turn-by-turn instructions, summary totals, scheduled stops, chronological duty events, daily logs, assumptions, warnings, and attribution. Entered `metadata` and the non-certified-record `notice` are canonical top-level response fields; they are intentionally not duplicated inside every daily-log object. The frontend passes those top-level values into each rendered sheet.
 
@@ -175,17 +177,23 @@ Anonymous autocomplete and trip-generation requests have best-effort process-loc
 ## HOS model used by this assessment
 
 - The driver begins after 10 consecutive hours off duty with fresh 11-hour and 14-hour clocks.
+- Every driving shift begins with a 30-minute pre-trip inspection logged On Duty—not driving. The fixed duration is an explicit planning assumption.
 - Driving is capped at 11 hours and never begins or continues beyond the 14-hour window.
-- A 30-minute non-driving interruption is inserted after eight cumulative driving hours; pickup, drop-off, or fueling also satisfy it when they occur in time.
+- A dedicated 30-minute Off Duty meal/rest break is inserted after eight cumulative driving hours; pickup, drop-off, or fueling also satisfy the break rule when they occur in time.
 - Pickup and drop-off are exactly one hour of On Duty—not driving.
 - Fuel is targeted at 950 miles, keeping every fuel interval below 1,000 miles. Fueling is 30 minutes On Duty—not driving. A station name is shown only when the provider returns one within five straight-line miles; the distance is disclosed and the station is not silently added as a route detour.
-- The initial cycle balance is `70 - current_cycle_used_hours`. A 34-hour restart is inserted before more driving when it reaches zero.
+- A normal daily rest is one contiguous 10-hour qualifying block: one hour Off Duty for a meal/dinner break followed by nine hours in the Sleeper Berth. The next pre-trip follows that block.
+- Meal/rest time qualifies as Off Duty only under the explicit assumption that the driver is relieved of work, vehicle, and cargo responsibility and is free to pursue personal activities. The modeled Sleeper Berth time assumes a vehicle with a compliant sleeper berth.
+- The initial cycle balance is `70 - current_cycle_used_hours`. A 34-hour restart is inserted when the balance is exhausted or cannot support the next pre-trip plus additional driving. Because prior daily records are not supplied, the planner conservatively shows the full 34-hour restart rather than crediting the separate pre-departure rest.
+- Paper-log 70-hour recap values use the documented conservative estimate: no starting hours age out before a scheduled 34-hour restart, A and C equal projected cycle use at day end, and B equals the remaining balance. The 60-hour/7-day recap is not used.
 - A simultaneous cycle and daily reset becomes one 34-hour block.
 - Pickup or drop-off work may finish after an arrival at a driving limit because those limits prohibit more driving, not all work.
+- The home-terminal log day is assumed to run midnight-to-midnight. When no timezone is entered, Current location is only a proxy for the actual home-terminal timezone and must be verified.
+- Rest and break markers are interpolated planning positions, not verified truck-parking facilities; the driver must confirm safe, legal parking before the trip.
 
-Split sleeper berth, short-haul exceptions, adverse-condition extensions, team driving, personal conveyance, traffic, and weather are intentionally excluded.
+Split-sleeper calculations, short-haul exceptions, adverse-condition extensions, team driving, personal conveyance, traffic, and weather are intentionally excluded. The contiguous one-hour Off Duty plus nine-hour Sleeper Berth daily-rest block is not a split-sleeper calculation.
 
-Daily sheets are split at midnight in the home-terminal timezone, with exactly one primary paper-log sheet generated for every calendar day touched by the trip. A driving event crossing midnight is interpolated to the correct route position for that sheet's From/To values and remarks. Unique duty-change and midnight positions are reverse-geocoded once per plan, and the resulting city/state label is reused by the driving event before a stop, the stop, the following drive, and the daily sheet. Time before departure and after trip completion is Off Duty, active statuses carry through midnight, the four paper-grid status totals reconcile to 24 hours, and daily mileage reconciles to route mileage. The print layout keeps each full daily sheet together and starts the next sheet on a new PDF page. A trip ending exactly at midnight remains on the prior sheet with a `24:00` completion remark rather than creating an empty next-day sheet. On daylight-saving transition dates, the real 23- or 25-hour interval is projected monotonically onto the 24-hour paper grid and clearly noted.
+Daily sheets are split at midnight in the home-terminal timezone, with exactly one primary paper-log sheet generated for every calendar day touched by the trip. A driving event crossing midnight is interpolated to the correct route position for that sheet's From/To values and remarks. Unique duty-change and midnight positions are reverse-geocoded once per plan, and the resulting city/state label is reused by the driving event before a stop, the stop, the following drive, and the daily sheet. Every operational non-driving period except Sleeper Berth gets one U-shaped paper bracket and one two-line location/activity description, such as `Richmond, VA` over `Pre-trip` or `Nashville, TN` over `Pickup`, with a divider between the two lines. Driving and Sleeper Berth changes remain in the accessible chronological remarks list without repeating labels beneath the paper ruler, whose visible total is `=24`. Time before plan start and after trip completion is Off Duty, active statuses carry through midnight, the four paper-grid status totals reconcile to 24 hours, and daily mileage reconciles to route mileage. No post-trip event is invented; the canonical trip ends with the required one-hour drop-off and the remainder of the sheet is projected Off Duty. The print layout keeps each full daily sheet together and starts the next sheet on a new PDF page. A trip ending exactly at midnight remains on the prior sheet with a `24:00` completion remark rather than creating an empty next-day sheet. On daylight-saving transition dates, the real 23- or 25-hour interval is projected monotonically onto the 24-hour paper grid and clearly noted.
 
 ## Checks
 
@@ -208,7 +216,7 @@ pnpm --filter frontend exec playwright install chromium
 pnpm --filter frontend test:e2e
 ```
 
-The backend suite covers event ordering/non-overlap, 8/11/14-hour boundaries, pickup/fuel break qualification, 0/near-70/70 cycle inputs, combined resets, multiple fuel intervals, leg-aware route interpolation, midnight/timezone and daylight-saving splitting, mileage and 24-hour invariants, provider failures, and request validation. Frontend tests cover form and result interactions, storage, daily tabs, accessible remarks, responsive log controls, and metadata. Playwright starts isolated demo servers on dedicated ports and runs the complete generation-to-logs flow at desktop and mobile sizes, so a developer's real-provider servers cannot make the smoke test nondeterministic. GitHub Actions runs linting, type checks, both test suites, the production build, and these browser smoke tests.
+The backend suite covers event ordering/non-overlap, recurring pre-trips, the meal-plus-sleeper rest sequence, 8/11/14-hour boundaries, pickup/fuel break qualification, 0/near-70/70 cycle inputs, On Duty work above 70 without further driving, combined resets, multiple fuel intervals, leg-aware route interpolation, midnight/timezone and daylight-saving splitting, mileage and 24-hour invariants, provider failures, and request validation. Frontend tests cover form and result interactions, storage, daily tabs, accessible remarks, recap values above 70, responsive log controls, and metadata. Playwright starts isolated demo servers on dedicated ports and runs the complete generation-to-logs flow at desktop and mobile sizes, so a developer's real-provider servers cannot make the smoke test nondeterministic. GitHub Actions runs linting, type checks, both test suites, the production build, and these browser smoke tests.
 
 ## Deploy as two Vercel projects
 
@@ -242,7 +250,7 @@ Before sharing the assessment, verify `GET /api/v1/health` returns HTTP `200` wi
 ## Limitations
 
 - This is a planning aid, not an FMCSA-certified ELD, legal opinion, dispatch system, or navigation product.
-- The starting cycle value is a simplified scalar; historical eight-day log records are not available, so a full rolling recap cannot be reconstructed.
+- The starting cycle value is a simplified scalar. Historical eight-day records are unavailable, so the displayed 70-hour A/B/C values are conservative estimates rather than a reconstruction of the driver's true rolling recap.
 - Demo mode uses deterministic interpolated geometry and estimated driving speed. Configure Geoapify for road-level truck routes and real place data.
 - Fuel lookup accepts only suggestions within five straight-line miles and keeps the scheduled marker anchored to the route; it reports the offset and does not claim or add an unmodeled station-driveway detour.
 - Required duty-change reverse geocoding is accuracy-critical. If it is unavailable, generation returns an explicit provider error instead of producing route-mile placeholders in the daily logs.

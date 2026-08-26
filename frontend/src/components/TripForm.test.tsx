@@ -55,6 +55,34 @@ const duplicateCases: Array<{
 ];
 
 describe("TripForm", () => {
+  it("submits from the single control inside the form", async () => {
+    const onGenerate = vi.fn().mockResolvedValue(undefined);
+    const onPrepareResults = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <TripForm
+        initialRequest={baseRequest}
+        loading={false}
+        onFormChange={vi.fn()}
+        onGenerate={onGenerate}
+        onPrepareResults={onPrepareResults}
+      />,
+    );
+
+    const submitButton = screen.getByRole("button", { name: "Generate route & logs" });
+    expect(screen.getAllByRole("button", { name: "Generate route & logs" })).toHaveLength(1);
+    expect(submitButton.closest("form")).toBeInstanceOf(HTMLFormElement);
+
+    await user.hover(submitButton);
+    expect(onPrepareResults).toHaveBeenCalled();
+    await user.click(submitButton);
+
+    expect(onGenerate).toHaveBeenCalledOnce();
+    expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({
+      current_cycle_used_hours: baseRequest.current_cycle_used_hours,
+    }));
+  });
+
   it.each(duplicateCases)("rejects duplicate coordinates for $name", async ({
     request,
     fieldLabel,

@@ -74,6 +74,59 @@ describe("API client", () => {
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/v1/trip-plans"), expect.objectContaining({ method: "POST" }));
   });
 
+  it("accepts legacy daily recaps without the optional estimate block", async () => {
+    const legacyPlan = structuredClone(tripPlanFixture);
+    for (const log of legacyPlan.daily_logs) {
+      if (!log.recap) continue;
+      delete log.recap.seventy_hour_a;
+      delete log.recap.seventy_hour_b;
+      delete log.recap.seventy_hour_c;
+      delete log.recap.estimated;
+      delete log.recap.estimate_basis;
+    }
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => legacyPlan,
+    }));
+
+    await expect(generateTripPlan(tripPlanFixture.request!)).resolves.toMatchObject({ id: "plan-1" });
+  });
+
+  it("rejects a partial recap estimate block", async () => {
+    const malformedPlan = structuredClone(tripPlanFixture);
+    delete malformedPlan.daily_logs[0].recap?.seventy_hour_c;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => malformedPlan,
+    }));
+
+    await expect(generateTripPlan(tripPlanFixture.request!)).rejects.toMatchObject({
+      code: "invalid_response",
+      retryable: true,
+      status: 502,
+    });
+  });
+
+  it("accepts cycle recap use above 70 when remaining hours stay at zero", async () => {
+    const plan = structuredClone(tripPlanFixture);
+    const recap = plan.daily_logs[0].recap!;
+    plan.daily_logs[0].cycle_used_hours = 71;
+    recap.cycle_used_at_end = 71;
+    recap.remaining_cycle_hours = 0;
+    recap.seventy_hour_a = 71;
+    recap.seventy_hour_b = 0;
+    recap.seventy_hour_c = 71;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => plan,
+    }));
+
+    await expect(generateTripPlan(tripPlanFixture.request!)).resolves.toMatchObject({ id: "plan-1" });
+  });
+
   it("rejects a successful response with malformed nested trip-plan data", async () => {
     const malformedPlan = {
       ...tripPlanFixture,

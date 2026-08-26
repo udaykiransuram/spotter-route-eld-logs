@@ -13,9 +13,14 @@ function SpotterMark() {
   );
 }
 
-export function AppHeader() {
+export function AppHeader({ landing = false }: { landing?: boolean }) {
   return (
-    <AppBar className="app-header" component="header" elevation={0} position="static">
+    <AppBar
+      className={`app-header${landing ? " app-header--landing" : ""}`}
+      component="header"
+      elevation={0}
+      position="static"
+    >
       <Toolbar className="app-header__inner" disableGutters sx={{ minHeight: "100% !important" }}>
         <Link className="brand" to="/" aria-label="Spotter route and ELD logs home">
           <SpotterMark />

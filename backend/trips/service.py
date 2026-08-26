@@ -37,12 +37,20 @@ SUGGESTION_CACHE_SECONDS = 5 * 60
 
 ASSUMPTIONS = [
     "Property-carrying driver using the 70-hour/8-day cycle with no adverse-condition extension.",
-    "The driver completed 10 consecutive hours off duty immediately before departure.",
+    "The driver completed 10 consecutive hours off duty immediately before the selected duty start.",
+    "Each driving shift begins with a 30-minute On Duty—not driving pre-trip inspection.",
     "Driving is limited to 11 hours within a 14-hour window after the qualifying 10-hour rest.",
-    "When the simplified 70-hour balance is exhausted, a 34-hour restart is inserted before more driving.",
+    "A 34-hour restart is inserted when the simplified cycle is exhausted or its remaining balance cannot support the next pre-trip inspection plus additional driving.",
+    "The planner shows a full 34-hour restart and does not credit the separate 10-hour pre-departure rest because prior-duty records are not supplied.",
     "Pickup and drop-off each take exactly one hour and are logged On Duty—not driving.",
-    "A 30-minute non-driving period satisfies the break after eight cumulative driving hours.",
+    "A dedicated 30-minute break is shown as an Off Duty Meal/rest break; another qualifying non-driving stop can satisfy the eight-hour driving-break rule.",
+    "A normal daily rest is shown as one hour Off Duty for a meal/dinner break followed by nine consecutive hours in the Sleeper Berth; together they provide 10 consecutive qualifying hours.",
+    "Off Duty meal/rest time assumes the driver is relieved of work, vehicle, and cargo responsibility and is free to pursue personal activities.",
+    "The vehicle is assumed to have a compliant sleeper berth that the driver uses for the modeled Sleeper Berth periods.",
+    "The home-terminal 24-hour log period is assumed to run from midnight to midnight.",
+    "Time before plan start on the first log day and after trip completion is assumed Off Duty.",
     "The truck begins with a full tank and fuels near mile 950, before any 1,000-mile interval.",
+    "No separate fixed-duration post-trip event is assumed; any inspection or reporting work actually performed must be logged On Duty—not driving.",
     "Traffic, weather, split sleeper berth, short-haul exceptions, team driving, and personal conveyance are excluded.",
 ]
 
@@ -87,9 +95,15 @@ class TripPlannerService:
         cycle_used = float(data["current_cycle_used_hours"])
         warnings = [
             (
-                "Only the starting 70-hour cycle total is available; prior eight-day daily "
-                "history and recaps that require it cannot be reconstructed."
-            )
+                "The 70-hour/8-day paper recap is a conservative estimate: no prior hours "
+                "are assumed to age out during this trip, A and C equal the simplified "
+                "cycle total at each day's end, B is the remaining balance floored at "
+                "zero, and a scheduled 34-hour restart resets the estimate."
+            ),
+            (
+                "Break and rest markers are planning positions along the route; confirm safe, "
+                "legal truck parking before driving."
+            ),
         ]
 
         waypoints = [current, pickup, dropoff]
@@ -111,6 +125,11 @@ class TripPlannerService:
                     if reverse.timezone is None:
                         warnings.append(
                             "Home-terminal timezone could not be detected; UTC was used."
+                        )
+                    else:
+                        warnings.append(
+                            "Home-terminal timezone was inferred from Current location as a "
+                            "planning proxy; verify it if the actual home terminal differs."
                         )
                 except ProviderError:
                     timezone_name = "UTC"
@@ -134,7 +153,7 @@ class TripPlannerService:
             resolved_route_locations=resolved_route_locations,
         )
         metadata = dict(data.get("metadata") or {})
-        stop_events = [event for event in events if event.status != "driving"]
+        stop_events = _route_stop_events(events)
         stops = [_stop_dict(event, index + 1) for index, event in enumerate(stop_events)]
 
         departure_utc = events[0].start_at.astimezone(UTC)
@@ -518,6 +537,49 @@ def _event_dict(event: DutyEvent) -> dict[str, object]:
         "miles_driven": round(event.miles_driven, 2),
         "note": event.note,
     }
+
+
+def _route_stop_events(events: list[DutyEvent]) -> list[DutyEvent]:
+    """Return geographic stops without duplicating log-only duty changes.
+
+    Pre-trip inspections remain in the canonical timeline and daily logs but
+    do not create a second marker over the current/rest location. The meal
+    period that begins a normal overnight rest is represented by the following
+    sleeper-rest marker at the same route point.
+    """
+
+    stops: list[DutyEvent] = []
+    index = 0
+    while index < len(events):
+        event = events[index]
+        if event.status == "driving" or event.event_type == "pretrip_inspection":
+            index += 1
+            continue
+        next_event = events[index + 1] if index + 1 < len(events) else None
+        begins_sleeper_rest = (
+            event.event_type == "meal_break"
+            and next_event is not None
+            and next_event.event_type == "rest"
+            and event.end_at == next_event.start_at
+            and abs(event.start_mile - next_event.start_mile) < 1e-7
+        )
+        if begins_sleeper_rest:
+            stops.append(
+                replace(
+                    next_event,
+                    start_at=event.start_at,
+                    status="sleeper_berth",
+                    note=(
+                        "10 consecutive hours of qualifying rest: a one-hour Off Duty "
+                        "meal/dinner break followed by nine hours in the Sleeper Berth."
+                    ),
+                )
+            )
+            index += 2
+            continue
+        stops.append(event)
+        index += 1
+    return stops
 
 
 def _stop_dict(event: DutyEvent, sequence: int) -> dict[str, object]:
