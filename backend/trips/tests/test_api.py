@@ -222,6 +222,9 @@ def test_create_plan_contract_and_invariants() -> None:
     assert result["metadata"]["main_office_address"] == "100 Main Street, Richmond, VA"
     assert result["metadata"]["home_terminal_address"] == "200 Terminal Road, Richmond, VA"
     assert result["notice"] == "Generated trip plan — not a certified ELD record."
+    assert "Each scheduled fuel stop is modeled as 30 minutes On Duty—not driving." in result[
+        "assumptions"
+    ]
     assert any(
         "70-hour/8-day paper recap is a conservative estimate" in warning
         for warning in result["warnings"]

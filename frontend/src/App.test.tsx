@@ -191,7 +191,18 @@ describe("Spotter application", () => {
     expect(screen.queryByText(tripPlanFixture.instructions[0].instruction)).not.toBeInTheDocument();
     await user.click(screen.getByText(new RegExp(`Turn-by-turn route instructions \\(${tripPlanFixture.instructions.length}\\)`)));
     expect(screen.getByText(tripPlanFixture.instructions[0].instruction)).toBeInTheDocument();
-    expect(screen.getByText(tripPlanFixture.assumptions[0])).toBeInTheDocument();
+    const planBasis = screen.getByRole("region", { name: "Plan basis" });
+    expect(within(planBasis).getByText(tripPlanFixture.assumptions[0])).toBeInTheDocument();
+    expect(within(planBasis).getByText(`${tripPlanFixture.assumptions.length} assumptions`)).toBeInTheDocument();
+    expect(within(planBasis).getByText(`${tripPlanFixture.warnings.length} warnings`)).toBeInTheDocument();
+    expect(within(planBasis).getByText("Assessment assumptions")).toBeInTheDocument();
+    expect(within(planBasis).getByText("Planning model choices")).toBeInTheDocument();
+    expect(within(planBasis).getByText("Important limitations")).toBeInTheDocument();
+    expect(within(planBasis).getByText(tripPlanFixture.notice)).toBeInTheDocument();
+    expect(planBasis.querySelectorAll(".assumptions__item--assumption")).toHaveLength(
+      tripPlanFixture.assumptions.length,
+    );
+    expect(within(planBasis).getAllByRole("note")).toHaveLength(tripPlanFixture.warnings.length);
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(String(init.body));

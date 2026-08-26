@@ -63,14 +63,6 @@ def build_daily_logs(
             day_end=day_end,
             locator=locator,
             resolved_route_locations=location_labels,
-            trip_completed_at=events[-1].end_at,
-            final_location=_location_at(
-                events[-1],
-                events[-1].end_at,
-                locator,
-                location_labels,
-            ),
-            final_status=events[-1].status,
         )
         status_totals = _status_totals(segments)
         cycle_start = _cycle_at(events, day_start.astimezone(UTC), initial_cycle_used_hours)
@@ -384,9 +376,6 @@ def _remarks_for_day(
     day_end: datetime,
     locator: RouteLocator,
     resolved_route_locations: Mapping[float, str],
-    trip_completed_at: datetime,
-    final_location: str,
-    final_status: DutyStatus,
 ) -> list[dict[str, object]]:
     remarks: list[dict[str, object]] = []
     for event in events:
@@ -426,29 +415,6 @@ def _remarks_for_day(
             }
         )
 
-    completion = trip_completed_at.astimezone(zone)
-    completion_minute = _grid_minute(trip_completed_at, day_start, day_end)
-    completes_at_day_end = trip_completed_at.astimezone(UTC) == day_end.astimezone(UTC)
-    completion_belongs_on_sheet = (
-        completion.date() == day and completion_minute > 0
-    ) or completes_at_day_end
-    if completion_belongs_on_sheet and final_status != "off_duty":
-        remarks.append(
-            {
-                "event_id": "trip-complete",
-                "time": (
-                    "24:00"
-                    if completes_at_day_end
-                    else f"{completion.hour:02d}:{completion.minute:02d}"
-                ),
-                "minute": round(completion_minute, 3),
-                "status": "off_duty",
-                "location": final_location,
-                "activity": "Trip complete",
-                "note": "Trip complete; Off Duty.",
-                "timezone_abbreviation": completion.tzname() or "",
-            }
-        )
     return remarks
 
 

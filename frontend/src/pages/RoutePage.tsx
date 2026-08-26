@@ -106,7 +106,11 @@ export function RoutePage() {
       />
       {plan ? (
         <Suspense fallback={null}>
-          <AssumptionsPanel assumptions={plan.assumptions} warnings={plan.warnings} />
+          <AssumptionsPanel
+            assumptions={plan.assumptions}
+            warnings={plan.warnings}
+            notice={plan.notice}
+          />
         </Suspense>
       ) : null}
     </div>

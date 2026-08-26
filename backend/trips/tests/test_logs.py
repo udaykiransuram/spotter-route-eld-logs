@@ -105,7 +105,7 @@ def test_tiny_multi_day_route_rounding_never_makes_a_sheet_negative() -> None:
     assert sum(log_cents) == target_cents
 
 
-def test_projected_off_duty_after_dropoff_has_matching_accessible_remark() -> None:
+def test_projected_off_duty_after_dropoff_does_not_add_synthetic_remark() -> None:
     departure = datetime(2026, 8, 25, 6, tzinfo=ZoneInfo("America/Chicago"))
     route = make_route(1, 1)
     events = schedule_route(route, departure, 0)
@@ -113,12 +113,17 @@ def test_projected_off_duty_after_dropoff_has_matching_accessible_remark() -> No
 
     assert events[-1].event_type == "dropoff"
     assert not any(event.event_type.startswith("posttrip") for event in events)
-    completion_remark = log["remarks"][-1]
-    assert completion_remark["status"] == "off_duty"
-    assert completion_remark["location"] == "Drop-off"
-    assert completion_remark["activity"] == "Trip complete"
-    assert completion_remark["note"] == "Trip complete; Off Duty."
-    assert completion_remark["minute"] == log["segments"][-1]["start_minute"]
+    assert log["segments"][-1]["status"] == "off_duty"
+    assert log["segments"][-2]["status"] == "on_duty"
+    assert log["segments"][-2]["end_minute"] == log["segments"][-1]["start_minute"]
+    assert log["segments"][-1]["end_minute"] == 1440
+    completion = events[-1].end_at.astimezone(ZoneInfo("America/Chicago"))
+    assert log["segments"][-1]["start_minute"] == pytest.approx(
+        completion.hour * 60 + completion.minute + completion.second / 60
+    )
+    assert log["remarks"][-1]["activity"] == "Drop-off"
+    assert not any(remark["event_id"] == "trip-complete" for remark in log["remarks"])
+    assert not any(remark["activity"] == "Trip complete" for remark in log["remarks"])
 
 
 def test_remarks_name_the_activity_and_location_for_each_duty_change() -> None:
@@ -166,13 +171,12 @@ def test_exact_midnight_completion_stays_on_prior_sheet(timezone_name: str) -> N
 
     assert events[-1].end_at.astimezone(zone) == datetime(2026, 8, 26, tzinfo=zone)
     assert [log["date"] for log in logs] == ["2026-08-25"]
-    completion_remark = logs[0]["remarks"][-1]
-    assert completion_remark["event_id"] == "trip-complete"
-    assert completion_remark["time"] == "24:00"
-    assert completion_remark["minute"] == 1440
-    assert completion_remark["status"] == "off_duty"
-    assert completion_remark["location"] == "Drop-off"
-    assert completion_remark["note"] == "Trip complete; Off Duty."
+    assert not any(
+        remark["event_id"] == "trip-complete"
+        for remark in logs[0]["remarks"]
+    )
+    assert logs[0]["remarks"][-1]["activity"] == "Drop-off"
+    assert logs[0]["remarks"][-1]["time"] == "23:00"
     assert logs[0]["segments"][-1] == {
         "status": "on_duty",
         "start_minute": 1380.0,

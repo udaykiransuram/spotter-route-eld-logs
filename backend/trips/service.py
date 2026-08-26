@@ -50,6 +50,7 @@ ASSUMPTIONS = [
     "The home-terminal 24-hour log period is assumed to run from midnight to midnight.",
     "Time before plan start on the first log day and after trip completion is assumed Off Duty.",
     "The truck begins with a full tank and fuels near mile 950, before any 1,000-mile interval.",
+    "Each scheduled fuel stop is modeled as 30 minutes On Duty—not driving.",
     "No separate fixed-duration post-trip event is assumed; any inspection or reporting work actually performed must be logged On Duty—not driving.",
     "Traffic, weather, split sleeper berth, short-haul exceptions, team driving, and personal conveyance are excluded.",
 ]

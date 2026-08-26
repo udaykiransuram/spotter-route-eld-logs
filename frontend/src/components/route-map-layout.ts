@@ -37,8 +37,10 @@ export function createPersistentFailureTracker(threshold: number): PersistentFai
 }
 
 /**
- * Separates small groups of nearby stop badges in screen space. The caller
- * keeps each map marker at its true coordinate and applies only these offsets.
+ * Separates small groups of nearby stop badges in screen space. Each group is
+ * spread along its local route direction in chronological order; coincident
+ * stops use a stable left-to-right sequence. The caller keeps each map marker
+ * at its true coordinate and applies only these offsets.
  */
 export function calculateMarkerDisplacements(
   points: MarkerScreenPoint[],
@@ -84,16 +86,26 @@ export function calculateMarkerDisplacements(
     center.x /= groupedPoints.length;
     center.y /= groupedPoints.length;
 
-    const radius = Math.max(
-      collisionDistance / 2,
-      collisionDistance / (2 * Math.sin(Math.PI / groupedPoints.length)),
-    );
-    const startAngle = groupedPoints.length === 2 ? 0 : -Math.PI / 2;
+    const firstPoint = groupedPoints[0];
+    const lastPoint = groupedPoints.at(-1) ?? firstPoint;
+    let axisX = lastPoint.x - firstPoint.x;
+    let axisY = lastPoint.y - firstPoint.y;
+    let axisLength = Math.hypot(axisX, axisY);
+
+    if (axisLength < 1) {
+      axisX = 1;
+      axisY = 0;
+      axisLength = 1;
+    }
+
+    axisX /= axisLength;
+    axisY /= axisLength;
+    const firstOffset = -((groupedPoints.length - 1) * collisionDistance) / 2;
 
     groupedPoints.forEach((point, index) => {
-      const angle = startAngle + (index * 2 * Math.PI) / groupedPoints.length;
-      const targetX = center.x + Math.cos(angle) * radius;
-      const targetY = center.y + Math.sin(angle) * radius;
+      const sequenceOffset = firstOffset + index * collisionDistance;
+      const targetX = center.x + axisX * sequenceOffset;
+      const targetY = center.y + axisY * sequenceOffset;
       displacements.set(point.id, { x: targetX - point.x, y: targetY - point.y });
     });
   }

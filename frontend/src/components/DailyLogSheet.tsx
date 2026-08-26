@@ -1,5 +1,6 @@
 import type { DailyLog, TripMetadata } from "../types";
 import { memo, useId } from "react";
+import { visibleLogRemarks } from "../lib/log-remarks";
 import { DailyLogTemplate } from "./DailyLogTemplate";
 import { LogLocationTimeline, LogTrace } from "./DailyLogTimeline";
 
@@ -120,6 +121,7 @@ export const DailyLogSheet = memo(function DailyLogSheet({ log, metadata = {} }:
     shippingDocument,
     driver,
   ].some((value) => value.truncated);
+  const remarks = visibleLogRemarks(log.remarks);
   return (
     <figure className="log-sheet" role="img" aria-labelledby={captionId}>
       <svg viewBox="0 0 513 518" aria-hidden="true" focusable="false">
@@ -233,7 +235,7 @@ export const DailyLogSheet = memo(function DailyLogSheet({ log, metadata = {} }:
         <LogLocationTimeline
           clipId={`${clipId}-location-timeline`}
           formatLocation={locationForPaperField}
-          remarks={log.remarks}
+          remarks={remarks}
           segments={log.segments}
         />
       </svg>

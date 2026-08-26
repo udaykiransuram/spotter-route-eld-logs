@@ -16,6 +16,7 @@ import {
 import { DailyLogSheet } from "../components/DailyLogSheet";
 import { DailySummary } from "../components/DailySummary";
 import { dutyStatusLabels, formatDayLabel } from "../lib/format";
+import { visibleLogRemarks } from "../lib/log-remarks";
 import { usePlan } from "../state/plan-context";
 
 export function DailyLogsPage() {
@@ -75,6 +76,7 @@ export function DailyLogsPage() {
   const destination = plan.request?.dropoff_location.label ?? plan.daily_logs.at(-1)?.to_location;
   const routeLabel = [origin, pickup, destination].filter(Boolean).join(" → ");
   const activeDate = formatLongLogDate(activeLog.date);
+  const activeRemarks = visibleLogRemarks(activeLog.remarks);
   const panInstructionId = `log-pan-instruction-${activeIndex}`;
   const metadata = plan.metadata ?? plan.request?.metadata;
 
@@ -238,7 +240,7 @@ export function DailyLogsPage() {
                   <h2 id="remarks-title">Duty-status remarks</h2>
                   <p>Times shown in {activeLog.timezone.replaceAll("_", " ")}.</p>
                 </div>
-                <span>{activeLog.remarks.length} {activeLog.remarks.length === 1 ? "entry" : "entries"}</span>
+                <span>{activeRemarks.length} {activeRemarks.length === 1 ? "entry" : "entries"}</span>
               </header>
               {activeLog.grid_note ? (
                 <div className="log-grid-note" role="note" aria-label="Daylight-saving time-grid note">
@@ -246,9 +248,9 @@ export function DailyLogsPage() {
                   <p>{activeLog.grid_note}</p>
                 </div>
               ) : null}
-              {activeLog.remarks.length > 0 ? (
+              {activeRemarks.length > 0 ? (
                 <ol>
-                  {activeLog.remarks.map((remark, index) => (
+                  {activeRemarks.map((remark, index) => (
                     <li className={`remark-item remark-item--${remark.status}`} key={`${remark.time}-${index}`}>
                       <span className="remark-item__marker" aria-hidden="true" />
                       <time>{remarkDisplayTime(remark)}</time>

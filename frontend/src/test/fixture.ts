@@ -907,16 +907,6 @@ export const tripPlanFixture: TripPlan = {
           "activity": "Drop-off",
           "note": "One hour on duty for drop-off.",
           "timezone_abbreviation": "EDT"
-        },
-        {
-          "event_id": "trip-complete",
-          "time": "05:07",
-          "minute": 307.834,
-          "status": "off_duty",
-          "location": "Dallas, TX, USA",
-          "activity": "Trip complete",
-          "note": "Trip complete; Off Duty.",
-          "timezone_abbreviation": "EDT"
         }
       ]
     }
@@ -939,13 +929,19 @@ export const tripPlanFixture: TripPlan = {
     "Pickup and drop-off each take exactly one hour and are logged On Duty—not driving.",
     "A dedicated 30-minute break is shown as an Off Duty Meal/rest break; another qualifying non-driving stop can satisfy the eight-hour driving-break rule.",
     "A normal daily rest is shown as one hour Off Duty for a meal/dinner break followed by nine consecutive hours in the Sleeper Berth; together they provide 10 consecutive qualifying hours.",
+    "Off Duty meal/rest time assumes the driver is relieved of work, vehicle, and cargo responsibility and is free to pursue personal activities.",
+    "The vehicle is assumed to have a compliant sleeper berth that the driver uses for the modeled Sleeper Berth periods.",
+    "The home-terminal 24-hour log period is assumed to run from midnight to midnight.",
+    "Time before plan start on the first log day and after trip completion is assumed Off Duty.",
     "The truck begins with a full tank and fuels near mile 950, before any 1,000-mile interval.",
+    "Each scheduled fuel stop is modeled as 30 minutes On Duty—not driving.",
     "No separate fixed-duration post-trip event is assumed; any inspection or reporting work actually performed must be logged On Duty—not driving.",
     "Traffic, weather, split sleeper berth, short-haul exceptions, team driving, and personal conveyance are excluded."
   ],
   "warnings": [
     "Demo routing is active. Configure Geoapify for road-level heavy-truck routes and real places.",
-    "The 70-hour/8-day paper recap is a conservative estimate: no prior hours are assumed to age out during this trip, A and C equal the simplified cycle total at each day's end, B is the remaining balance floored at zero, and a scheduled 34-hour restart resets the estimate."
+    "The 70-hour/8-day paper recap is a conservative estimate: no prior hours are assumed to age out during this trip, A and C equal the simplified cycle total at each day's end, B is the remaining balance floored at zero, and a scheduled 34-hour restart resets the estimate.",
+    "Break and rest markers are planning positions along the route; confirm safe, legal truck parking before driving."
   ],
   "notice": "Generated trip plan — not a certified ELD record.",
   "attribution": {

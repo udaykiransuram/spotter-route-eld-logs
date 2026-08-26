@@ -136,20 +136,34 @@ describe("DailyLogSheet", () => {
     expect(Number(coordinates?.[2])).toBeCloseTo(Number(coordinates?.[1]), 3);
   });
 
-  it("brackets the projected trip-complete period through the end of the log day", () => {
+  it("does not add a synthetic trip-complete remark after drop-off", () => {
     const finalLog = tripPlanFixture.daily_logs.at(-1)!;
-    const { container } = render(<DailyLogSheet log={finalLog} />);
+    const legacyLog = {
+      ...finalLog,
+      remarks: [
+        ...finalLog.remarks,
+        {
+          event_id: "trip-complete",
+          time: "05:07",
+          minute: 307.834,
+          status: "off_duty" as const,
+          location: "Dallas, TX",
+          activity: "Trip complete",
+          note: "Trip complete; Off Duty.",
+        },
+      ],
+    };
+    const { container } = render(<DailyLogSheet log={legacyLog} />);
 
-    const tripComplete = container.querySelector(
-      '[data-location-annotation][data-activity="Trip complete"]',
-    );
-    expect(tripComplete).toHaveAttribute("data-end-minute", "1440");
-    expect(tripComplete?.querySelector("[data-location-label]"))
-      .toHaveAttribute("aria-label", "Dallas, TX / Trip complete");
     expect(container.querySelectorAll('[data-location-annotation][data-activity="Trip complete"]'))
-      .toHaveLength(1);
+      .toHaveLength(0);
     expect(container.querySelector('[data-location-bracket][data-activity="Trip complete"]'))
-      .toHaveAttribute("data-end-minute", "1440");
+      .not.toBeInTheDocument();
+    expect(finalLog.segments.at(-1)).toMatchObject({
+      status: "off_duty",
+      end_minute: 1440,
+    });
+    expect(finalLog.remarks.at(-1)?.activity).toBe("Drop-off");
   });
 
   it("keeps driving and sleeper periods out of the paper remark labels", () => {
@@ -218,8 +232,43 @@ describe("DailyLogSheet", () => {
     expect(container.querySelectorAll("[data-location-boundary]")).toHaveLength(13);
     expect(container.querySelectorAll("[data-location-bracket]")).toHaveLength(12);
     expect(container.querySelectorAll("[data-location-legend-entry]")).toHaveLength(12);
+    const legendLabels = [...container.querySelectorAll("[data-location-legend-label]")];
+    expect(Math.max(...legendLabels.map((label) => Number(label.getAttribute("y")))))
+      .toBeLessThanOrEqual(315);
     expect(container.querySelector("[data-location-label]")).not.toBeInTheDocument();
     expect(container).not.toHaveTextContent("See on-screen remarks");
+  });
+
+  it("moves a fourth dense remark into a new column above Shipping Documents", () => {
+    const firstLog = tripPlanFixture.daily_logs[0];
+    const log = {
+      ...firstLog,
+      segments: [
+        { status: "off_duty" as const, start_minute: 0, end_minute: 143 },
+        { status: "on_duty" as const, start_minute: 143, end_minute: 173 },
+        { status: "driving" as const, start_minute: 173, end_minute: 311 },
+        { status: "on_duty" as const, start_minute: 311, end_minute: 341 },
+        { status: "driving" as const, start_minute: 341, end_minute: 821 },
+        { status: "off_duty" as const, start_minute: 821, end_minute: 851 },
+        { status: "driving" as const, start_minute: 851, end_minute: 879 },
+        { status: "on_duty" as const, start_minute: 879, end_minute: 939 },
+        { status: "off_duty" as const, start_minute: 939, end_minute: 1440 },
+      ],
+      remarks: [
+        { event_id: "pretrip", time: "02:23", minute: 143, status: "on_duty" as const, location: "Fort Hancock, TX", activity: "Pre-trip inspection", note: "Pre-trip." },
+        { event_id: "fuel", time: "05:11", minute: 311, status: "on_duty" as const, location: "Toyah, TX", activity: "Fueling", note: "Fueling." },
+        { event_id: "meal", time: "13:41", minute: 821, status: "off_duty" as const, location: "Fort Worth, TX", activity: "Meal/rest break", note: "Meal break." },
+        { event_id: "dropoff", time: "14:39", minute: 879, status: "on_duty" as const, location: "Dallas, TX", activity: "Drop-off", note: "Drop-off." },
+      ],
+    };
+    const { container } = render(<DailyLogSheet log={log} />);
+
+    const labels = [...container.querySelectorAll("[data-location-legend-label]")];
+    expect(labels).toHaveLength(4);
+    expect(labels.map((label) => Number(label.getAttribute("y")))).toEqual([291, 303, 315, 291]);
+    expect(Number(labels[3].getAttribute("x"))).toBeGreaterThan(Number(labels[0].getAttribute("x")));
+    expect(Math.max(...labels.map((label) => Number(label.getAttribute("y")))))
+      .toBeLessThan(327);
   });
 
   it("labels and renders the estimated 70-hour recap without implying 60-hour data", () => {

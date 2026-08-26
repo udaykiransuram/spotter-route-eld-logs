@@ -187,6 +187,34 @@ test("generates a route, synchronizes stops, and opens filled daily logs", async
   await expect(selectedStop).toContainText("Drop-off");
   await expect(selectedStop).toContainText("Dallas");
 
+  const planBasis = page.getByRole("region", { name: "Plan basis" });
+  await planBasis.scrollIntoViewIfNeeded();
+  await expect(planBasis).toBeVisible();
+  await expect(planBasis.getByText("Assessment assumptions")).toBeVisible();
+  await expect(planBasis.getByText("Planning model choices")).toBeVisible();
+  await expect(planBasis.getByText("Important limitations")).toBeVisible();
+  await expect(planBasis.getByText("17 assumptions")).toBeVisible();
+  await expect(planBasis.getByText("4 warnings", { exact: true })).toBeVisible();
+  await expect(planBasis.locator(".assumptions__item--assumption")).toHaveCount(17);
+  await expect(planBasis.getByRole("note")).toHaveCount(4);
+  await expect(planBasis.locator(".lucide-circle-check")).toHaveCount(0);
+  const planningGroup = planBasis.locator('[data-assumption-group="planning"]');
+  await expect(planningGroup).not.toHaveAttribute("open", "");
+  await planningGroup.locator("summary").click();
+  await expect(planningGroup).toHaveAttribute("open", "");
+  const planBasisWidths = await planBasis.evaluate((panel) => ({
+    panelClientWidth: panel.clientWidth,
+    panelScrollWidth: panel.scrollWidth,
+    groups: [...panel.querySelectorAll(".assumptions__group")].map((group) => ({
+      clientWidth: group.clientWidth,
+      scrollWidth: group.scrollWidth,
+    })),
+  }));
+  expect(planBasisWidths.panelScrollWidth).toBeLessThanOrEqual(planBasisWidths.panelClientWidth + 1);
+  for (const group of planBasisWidths.groups) {
+    expect(group.scrollWidth).toBeLessThanOrEqual(group.clientWidth + 1);
+  }
+
   await page.getByRole("link", { name: /View daily logs/ }).click();
   await expect(page).toHaveURL(/\/logs$/);
   await expect(page.getByRole("heading", { name: "Daily logs" })).toBeVisible();

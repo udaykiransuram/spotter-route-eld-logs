@@ -65,6 +65,36 @@ describe("Daily logs page", () => {
     await waitFor(() => expect(document.querySelectorAll(".print-log-page")).toHaveLength(0));
   });
 
+  it("hides the retired synthetic trip-complete remark in cached plans", async () => {
+    const user = userEvent.setup();
+    const finalLog = tripPlanFixture.daily_logs.at(-1)!;
+    const legacyFinalLog = {
+      ...finalLog,
+      remarks: [
+        ...finalLog.remarks,
+        {
+          event_id: "trip-complete",
+          time: "05:07",
+          minute: 307.834,
+          status: "off_duty" as const,
+          location: "Dallas, TX",
+          activity: "Trip complete",
+          note: "Trip complete; Off Duty.",
+        },
+      ],
+    };
+    renderLogs({
+      ...tripPlanFixture,
+      daily_logs: [...tripPlanFixture.daily_logs.slice(0, -1), legacyFinalLog],
+    });
+
+    await user.click(await screen.findByRole("tab", { name: /Aug 27 · Day 3/ }));
+
+    expect(screen.queryByText(/Trip complete/i)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Drop-off/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(`${finalLog.remarks.length} entries`)).toBeInTheDocument();
+  });
+
   it("supports arrow, Home, and End keyboard navigation between day tabs", async () => {
     const user = userEvent.setup();
     renderLogs();

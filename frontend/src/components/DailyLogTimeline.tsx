@@ -12,6 +12,7 @@ const REMARK_LABEL_RIGHT = 450;
 const REMARK_LABEL_ROTATION = -50;
 const MIN_DIRECT_LABEL_CLEARANCE = 17;
 const DIRECT_LABEL_LIMIT = 8;
+const DENSE_LEGEND_MAX_ROWS = 3;
 const LEGACY_REMARK_TIME_PATTERN = /^(\d{1,2}):(\d{2})(?:\s*([AP])\.?M\.?)?$/i;
 const REMARK_RULER_TICKS = Array.from({ length: 97 }, (_, quarter) => ({
   isHalfHour: quarter % 2 === 0,
@@ -371,7 +372,7 @@ function DirectLocationLabels({ labels }: { labels: DirectLabel[] }) {
 }
 
 function DenseLocationLegend({ annotations }: { annotations: LocationAnnotation[] }) {
-  const rows = Math.min(8, Math.max(1, annotations.length));
+  const rows = Math.min(DENSE_LEGEND_MAX_ROWS, Math.max(1, annotations.length));
   const columns = Math.ceil(annotations.length / rows);
   const availableWidth = REMARK_LABEL_RIGHT - REMARK_LABEL_LEFT;
   const columnWidth = availableWidth / columns;
@@ -398,7 +399,16 @@ function DenseLocationLegend({ annotations }: { annotations: LocationAnnotation[
           <g data-location-legend-entry data-start-minute={annotation.startMinute} key={annotation.key}>
             <circle cx={markerX} cy="279" r="4" fill="#173b5b" stroke="#ffffff" strokeWidth="0.75" />
             <text x={markerX} y="280.6" fill="#ffffff" fontSize="3.6" fontWeight="700" textAnchor="middle">{number}</text>
-            <text x={legendX} y={legendY} fill="#06152d" fontSize="5.2" fontWeight="700">{legendLabel}</text>
+            <text
+              data-location-legend-label
+              x={legendX}
+              y={legendY}
+              fill="#06152d"
+              fontSize="5.2"
+              fontWeight="700"
+            >
+              {legendLabel}
+            </text>
           </g>
         );
       })}
