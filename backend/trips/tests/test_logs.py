@@ -171,10 +171,7 @@ def test_exact_midnight_completion_stays_on_prior_sheet(timezone_name: str) -> N
 
     assert events[-1].end_at.astimezone(zone) == datetime(2026, 8, 26, tzinfo=zone)
     assert [log["date"] for log in logs] == ["2026-08-25"]
-    assert not any(
-        remark["event_id"] == "trip-complete"
-        for remark in logs[0]["remarks"]
-    )
+    assert not any(remark["event_id"] == "trip-complete" for remark in logs[0]["remarks"])
     assert logs[0]["remarks"][-1]["activity"] == "Drop-off"
     assert logs[0]["remarks"][-1]["time"] == "23:00"
     assert logs[0]["segments"][-1] == {
