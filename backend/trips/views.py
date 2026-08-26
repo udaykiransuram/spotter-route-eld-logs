@@ -40,7 +40,9 @@ class LocationSuggestView(APIView):
         finally:
             if service is not None:
                 service.close()
-        return Response(result)
+        response = Response(result)
+        response["Cache-Control"] = "public, max-age=60, s-maxage=300, stale-while-revalidate=86400"
+        return response
 
 
 class TripPlanView(APIView):

@@ -4,7 +4,11 @@ import InputAdornment from "@mui/material/InputAdornment";
 import TextField from "@mui/material/TextField";
 import { Check, ChevronDown, MapPin, Search, X } from "lucide-react";
 import { memo, useEffect, useId, useState } from "react";
-import { ApiError, suggestLocations } from "../api/client";
+import {
+  ApiError,
+  readCachedLocationSuggestions,
+  suggestLocations,
+} from "../api/client";
 import type { LocationValue } from "../types";
 import { locationFieldSx } from "./form-control-styles";
 
@@ -18,6 +22,7 @@ interface LocationAutocompleteProps {
 }
 
 const keepProviderOrder = (availableOptions: LocationValue[]) => availableOptions;
+const LOCATION_SEARCH_DEBOUNCE_MS = 180;
 
 export const LocationAutocomplete = memo(function LocationAutocomplete({
   label,
@@ -39,13 +44,24 @@ export const LocationAutocomplete = memo(function LocationAutocomplete({
     const trimmed = query.trim();
     if (value?.label === query || trimmed.length < 3) return;
 
-    const controller = new AbortController();
-    const timer = window.setTimeout(async () => {
-      setLoading(true);
-      setMessage("");
+    const cachedSuggestions = readCachedLocationSuggestions(trimmed);
+    if (cachedSuggestions) {
+      setOptions(cachedSuggestions);
+      setMessage(cachedSuggestions.length === 0 ? "No matching locations found." : "");
+      setLoading(false);
       setOpen(true);
+      return;
+    }
+
+    const controller = new AbortController();
+    setOptions([]);
+    setLoading(true);
+    setMessage("");
+    setOpen(true);
+    const timer = window.setTimeout(async () => {
       try {
         const suggestions = await suggestLocations(trimmed, controller.signal);
+        if (controller.signal.aborted) return;
         setOptions(suggestions);
         setMessage(suggestions.length === 0 ? "No matching locations found." : "");
       } catch (requestError) {
@@ -61,7 +77,7 @@ export const LocationAutocomplete = memo(function LocationAutocomplete({
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
-    }, 250);
+    }, LOCATION_SEARCH_DEBOUNCE_MS);
 
     return () => {
       window.clearTimeout(timer);

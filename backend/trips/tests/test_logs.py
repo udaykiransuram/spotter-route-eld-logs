@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from trips.domain import DutyEvent, Location, RouteLeg, RouteResult
-from trips.logs import build_daily_logs
+from trips.logs import build_daily_logs, collect_log_location_points
 from trips.scheduler import schedule_route
 from trips.tests.test_scheduler import make_route
 
@@ -165,11 +165,25 @@ def test_midnight_locations_and_continued_remark_use_actual_route_position() -> 
         note="Overnight drive.",
     )
 
-    logs = build_daily_logs([event], "America/Denver", route, 0)
+    location_points = collect_log_location_points(
+        [event],
+        "America/Denver",
+        route,
+    )
+    assert list(location_points) == [100.0]
+    assert location_points[100.0] == pytest.approx((2.0, 0.0))
 
-    assert logs[0]["to_location"] == "Route mile 100"
-    assert logs[1]["from_location"] == "Route mile 100"
-    assert logs[1]["remarks"][0]["location"] == "Route mile 100"
+    logs = build_daily_logs(
+        [event],
+        "America/Denver",
+        route,
+        0,
+        resolved_route_locations={100.0: "Near I-40, Amarillo, TX"},
+    )
+
+    assert logs[0]["to_location"] == "Near I-40, Amarillo, TX"
+    assert logs[1]["from_location"] == "Near I-40, Amarillo, TX"
+    assert logs[1]["remarks"][0]["location"] == "Near I-40, Amarillo, TX"
     assert logs[1]["remarks"][0]["note"] == "Continued: Overnight drive."
 
 

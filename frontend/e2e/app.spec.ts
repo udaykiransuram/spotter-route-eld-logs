@@ -17,13 +17,28 @@ test("generates a route, synchronizes stops, and opens filled daily logs", async
       }),
     });
   });
+  await page.route("**/api/v1/trip-plans", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    await route.continue();
+  });
 
   await page.goto("/");
   await expect(page).toHaveTitle("Route & ELD Logs");
   await expect(page.getByRole("heading", { name: "Enter trip details" })).toBeVisible();
 
   await page.getByRole("button", { name: "Generate route & logs" }).click();
+  const generationStatus = page.getByRole("status").filter({ hasText: "Building your route & logs" });
+  await expect(generationStatus).toBeVisible();
+  await expect(page.getByRole("button", { name: "Generating route…" })).toBeDisabled();
+  const loadingWidths = await generationStatus.evaluate((status) => ({
+    viewport: window.innerWidth,
+    statusRight: status.getBoundingClientRect().right,
+    document: document.documentElement.scrollWidth,
+  }));
+  expect(loadingWidths.statusRight).toBeLessThanOrEqual(loadingWidths.viewport + 1);
+  expect(loadingWidths.document).toBeLessThanOrEqual(loadingWidths.viewport + 1);
   await expect(page.getByRole("heading", { name: "Route plan" })).toBeVisible();
+  await expect(generationStatus).toHaveCount(0);
   const distanceMetric = page.getByLabel("Trip summary")
     .locator(".route-summary__metric")
     .filter({ hasText: "Distance" });

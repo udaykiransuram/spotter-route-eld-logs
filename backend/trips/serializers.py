@@ -97,19 +97,33 @@ class TripPlanRequestSerializer(serializers.Serializer):
                 departure = candidate
             attrs["departure_at"] = departure
 
-        locations = [
-            attrs["current_location"],
-            attrs["pickup_location"],
-            attrs["dropoff_location"],
-        ]
-        coordinates = [
-            (round(float(location["lat"]), 6), round(float(location["lon"]), 6))
-            for location in locations
-        ]
-        if len(set(coordinates)) != len(coordinates):
-            raise serializers.ValidationError(
-                {"dropoff_location": "Current, pickup, and drop-off locations must differ."}
+        coordinates = {
+            field: (
+                round(float(attrs[field]["lat"]), 6),
+                round(float(attrs[field]["lon"]), 6),
             )
+            for field in ("current_location", "pickup_location", "dropoff_location")
+        }
+        duplicate_pairs = (
+            (
+                "pickup_location",
+                "current_location",
+                "Pickup location must differ from current location.",
+            ),
+            (
+                "dropoff_location",
+                "current_location",
+                "Drop-off location must differ from current location.",
+            ),
+            (
+                "dropoff_location",
+                "pickup_location",
+                "Drop-off location must differ from pickup location.",
+            ),
+        )
+        for field, other_field, message in duplicate_pairs:
+            if coordinates[field] == coordinates[other_field]:
+                raise serializers.ValidationError({field: message})
         return attrs
 
 

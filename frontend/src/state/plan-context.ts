@@ -4,6 +4,7 @@ import type { TripPlan } from "../types";
 export interface PlanContextValue {
   plan: TripPlan | null;
   savePlan: (plan: TripPlan) => void;
+  clearPlan: () => void;
 }
 
 export const PlanContext = createContext<PlanContextValue | null>(null);

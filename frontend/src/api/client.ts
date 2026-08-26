@@ -11,6 +11,7 @@ const fallbackBaseUrl = import.meta.env.DEV ? "http://127.0.0.1:8000" : "";
 const API_BASE_URL = (configuredBaseUrl || fallbackBaseUrl).replace(/\/$/, "");
 const SUGGESTION_CACHE_TTL_MS = 5 * 60 * 1000;
 const SUGGESTION_CACHE_LIMIT = 40;
+const API_PRECONNECT_ATTRIBUTE = "data-spotter-api-preconnect";
 
 interface SuggestionCacheEntry {
   expiresAt: number;
@@ -71,19 +72,40 @@ function invalidResponseError() {
   });
 }
 
+export function prepareApiConnection() {
+  if (typeof document === "undefined" || typeof window === "undefined") return;
+  if (document.head.querySelector(`link[${API_PRECONNECT_ATTRIBUTE}]`)) return;
+
+  const link = document.createElement("link");
+  link.rel = "preconnect";
+  link.href = new URL(API_BASE_URL, window.location.href).origin;
+  link.crossOrigin = "anonymous";
+  link.setAttribute(API_PRECONNECT_ATTRIBUTE, "true");
+  document.head.append(link);
+}
+
+export function readCachedLocationSuggestions(query: string): LocationValue[] | null {
+  const cacheKey = query.trim().toLocaleLowerCase();
+  const cached = suggestionCache.get(cacheKey);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    suggestionCache.delete(cacheKey);
+    return null;
+  }
+
+  suggestionCache.delete(cacheKey);
+  suggestionCache.set(cacheKey, cached);
+  return cached.suggestions;
+}
+
 export async function suggestLocations(
   query: string,
   signal?: AbortSignal,
 ): Promise<LocationValue[]> {
   if (signal?.aborted) throw new DOMException("The request was aborted.", "AbortError");
   const cacheKey = query.trim().toLocaleLowerCase();
-  const cached = suggestionCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    suggestionCache.delete(cacheKey);
-    suggestionCache.set(cacheKey, cached);
-    return cached.suggestions;
-  }
-  if (cached) suggestionCache.delete(cacheKey);
+  const cached = readCachedLocationSuggestions(cacheKey);
+  if (cached) return cached;
 
   const response = await fetch(
     `${API_BASE_URL}/api/v1/locations/suggest?q=${encodeURIComponent(query)}`,

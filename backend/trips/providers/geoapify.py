@@ -204,7 +204,10 @@ class GeoapifyRoutingProvider:
         if not isinstance(results, list):
             raise _invalid_response()
         if not results:
-            return ReverseLocation(f"{lat:.4f}, {lon:.4f}")
+            raise ProviderError(
+                "location_not_found",
+                "A duty-change location could not be reverse-geocoded.",
+            )
         properties = results[0]
         if not isinstance(properties, dict):
             raise _invalid_response()
@@ -214,7 +217,10 @@ class GeoapifyRoutingProvider:
         timezone_name = timezone.get("name") if isinstance(timezone, dict) else None
         if timezone_name is not None and not isinstance(timezone_name, str):
             raise _invalid_response()
-        return ReverseLocation(properties.get("formatted") or "Route stop", timezone_name)
+        label = _eld_location_label(properties)
+        if not label:
+            raise _invalid_response("The routing provider returned an incomplete location.")
+        return ReverseLocation(label, timezone_name)
 
     def close(self) -> None:
         if self._owns_client:
@@ -427,3 +433,20 @@ def _invalid_response(
     message: str = "The routing provider returned an invalid response.",
 ) -> ProviderError:
     return ProviderError("invalid_provider_response", message)
+
+
+def _eld_location_label(properties: dict[str, Any]) -> str:
+    """Prefer the concise locality and state format expected in paper-log remarks."""
+
+    locality = next(
+        (
+            str(properties.get(field)).strip()
+            for field in ("city", "town", "village", "municipality", "hamlet", "county")
+            if properties.get(field)
+        ),
+        "",
+    )
+    state = str(properties.get("state_code") or properties.get("state") or "").strip()
+    if locality and state:
+        return f"{locality}, {state}"
+    return str(properties.get("formatted") or "").strip()

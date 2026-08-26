@@ -18,6 +18,15 @@ EventType = Literal[
     "cycle_restart",
 ]
 
+ROUTE_MILE_PREFIX = "Route mile "
+ROUTE_MILE_KEY_PRECISION = 3
+
+
+def route_mile_key(route_mile: float) -> float:
+    """Return a stable request-local key for one canonical route position."""
+
+    return round(float(route_mile), ROUTE_MILE_KEY_PRECISION)
+
 
 @dataclass(frozen=True, slots=True)
 class Location:
@@ -248,4 +257,4 @@ class RouteLocator:
         for mileage, location in self._boundaries:
             if abs(clamped_mile - mileage) <= tolerance:
                 return location.label
-        return f"Route mile {clamped_mile:,.0f}"
+        return f"{ROUTE_MILE_PREFIX}{clamped_mile:,.0f}"

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import gzip
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from threading import Lock
+from threading import Event, Lock
 from time import sleep
 
 import pytest
@@ -11,10 +13,18 @@ from django.test import override_settings
 from rest_framework.test import APIClient
 from rest_framework.throttling import ScopedRateThrottle
 
-from trips.domain import DutyEvent, NearbyPlace, ReverseLocation
+from trips.domain import (
+    DutyEvent,
+    Location,
+    NearbyPlace,
+    ReverseLocation,
+    RouteLeg,
+    RouteResult,
+    route_mile_key,
+)
 from trips.providers.base import ProviderError
 from trips.providers.demo import DemoRoutingProvider
-from trips.service import TripPlannerService
+from trips.service import TripPlannerService, _serialized_route_coordinates
 
 
 def payload() -> dict[str, object]:
@@ -64,6 +74,98 @@ def test_health_and_location_suggestions() -> None:
     assert health["access-control-allow-origin"] == "http://127.0.0.1:5173"
     assert suggestions.status_code == 200
     assert suggestions.json()["suggestions"][0]["label"] == "Dallas, TX, USA"
+    assert "s-maxage=300" in suggestions["cache-control"]
+
+
+def test_location_suggestions_are_cached_by_normalized_query() -> None:
+    class CountingProvider(DemoRoutingProvider):
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        def suggest(self, query: str, *, limit: int = 6) -> list[Location]:
+            self.queries.append(query)
+            return super().suggest(query, limit=limit)
+
+    cache.clear()
+    provider = CountingProvider()
+    service = TripPlannerService(provider)
+
+    first = service.suggest("  New   York ")
+    second = service.suggest("new york")
+
+    assert first == second
+    assert provider.queries == ["New York"]
+
+
+def test_auto_timezone_lookup_and_route_request_run_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CoordinatedProvider(DemoRoutingProvider):
+        def __init__(self) -> None:
+            self.route_started = Event()
+            self.timezone_started = Event()
+
+        def route(self, waypoints: list[Location]) -> RouteResult:
+            self.route_started.set()
+            assert self.timezone_started.wait(1), "timezone lookup did not overlap routing"
+            return super().route(waypoints)
+
+        def reverse(self, coordinate: tuple[float, float]) -> ReverseLocation:
+            if coordinate == (-77.436, 37.5407):
+                self.timezone_started.set()
+                assert self.route_started.wait(1), "routing did not overlap timezone lookup"
+            return super().reverse(coordinate)
+
+    provider = CoordinatedProvider()
+    monkeypatch.setattr("trips.service.get_provider", lambda: provider)
+    request_payload = payload()
+    request_payload.pop("home_terminal_timezone")
+
+    response = APIClient().post("/api/v1/trip-plans", request_payload, format="json")
+
+    assert response.status_code == 201
+    assert provider.route_started.is_set()
+    assert provider.timezone_started.is_set()
+
+
+@override_settings(USE_DEMO_PROVIDER=True)
+def test_trip_plan_response_supports_gzip() -> None:
+    response = APIClient().post(
+        "/api/v1/trip-plans",
+        payload(),
+        format="json",
+        HTTP_ACCEPT_ENCODING="gzip",
+    )
+
+    assert response.status_code == 201
+    assert response["content-encoding"] == "gzip"
+    decoded = json.loads(gzip.decompress(response.content))
+    assert decoded["route"]["geometry"]["type"] == "LineString"
+
+
+def test_serialized_route_geometry_is_simplified_per_leg() -> None:
+    current = Location("Current", 35.0, -100.0)
+    pickup = Location("Pickup", 36.0, -90.0)
+    dropoff = Location("Drop-off", 35.0, -80.0)
+    first_path = tuple((-100.0 + index / 100, 35.0 + index / 1000) for index in range(1001))
+    second_path = tuple((-90.0 + index / 100, 36.0 - index / 1000) for index in range(1001))
+    route = RouteResult(
+        coordinates=first_path + second_path[1:],
+        legs=(
+            RouteLeg(0, current, pickup, 600, 10),
+            RouteLeg(1, pickup, dropoff, 600, 10),
+        ),
+        instructions=(),
+        distance_miles=1200,
+        duration_hours=20,
+        attribution="Test",
+        leg_coordinates=(first_path, second_path),
+    )
+
+    serialized = _serialized_route_coordinates(route)
+
+    assert serialized == (current.coordinate, pickup.coordinate, dropoff.coordinate)
+    assert len(route.coordinates) == 2001
 
 
 @override_settings(USE_DEMO_PROVIDER=True)
@@ -92,6 +194,15 @@ def test_create_plan_contract_and_invariants() -> None:
     assert result["metadata"]["home_terminal_address"] == "200 Terminal Road, Richmond, VA"
     assert result["notice"] == "Generated trip plan — not a certified ELD record."
     assert result["attribution"]["map"]
+    public_locations = [
+        *(event["start_location"] for event in result["duty_events"]),
+        *(event["end_location"] for event in result["duty_events"]),
+        *(stop["label"] for stop in result["stops"]),
+        *(log["from_location"] for log in result["daily_logs"]),
+        *(log["to_location"] for log in result["daily_logs"]),
+        *(remark["location"] for log in result["daily_logs"] for remark in log["remarks"]),
+    ]
+    assert all(not location.startswith("Route mile ") for location in public_locations)
 
 
 @override_settings(USE_DEMO_PROVIDER=False, GEOAPIFY_API_KEY="")
@@ -164,6 +275,56 @@ def test_validation_errors_have_stable_envelope(
     assert response.json()["error"] == {
         "code": "validation_error",
         "message": response.json()["error"]["message"],
+        "field": expected_field,
+        "retryable": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("duplicate_field", "source_field", "expected_field", "expected_message"),
+    [
+        (
+            "pickup_location",
+            "current_location",
+            "pickup_location",
+            "Pickup location must differ from current location.",
+        ),
+        (
+            "dropoff_location",
+            "current_location",
+            "dropoff_location",
+            "Drop-off location must differ from current location.",
+        ),
+        (
+            "dropoff_location",
+            "pickup_location",
+            "dropoff_location",
+            "Drop-off location must differ from pickup location.",
+        ),
+    ],
+)
+@override_settings(USE_DEMO_PROVIDER=True)
+def test_duplicate_locations_are_owned_by_the_field_that_repeats_an_earlier_stop(
+    duplicate_field: str,
+    source_field: str,
+    expected_field: str,
+    expected_message: str,
+) -> None:
+    request_payload = payload()
+    source_location = request_payload[source_field]
+    assert isinstance(source_location, dict)
+    request_payload[duplicate_field] = {
+        **source_location,
+        "id": f"duplicate-{duplicate_field}",
+        "label": "Same place",
+    }
+
+    response = APIClient().post("/api/v1/trip-plans", request_payload, format="json")
+
+    assert response.status_code == 400
+    assert response.json()["error"] == {
+        "code": "validation_error",
+        "message": expected_message,
         "field": expected_field,
         "retryable": False,
     }
@@ -286,6 +447,33 @@ def test_provider_quota_error_is_normalized(monkeypatch: pytest.MonkeyPatch) -> 
     }
 
 
+def test_required_location_failure_is_returned_instead_of_route_mile_logs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RequiredLocationFailureProvider(DemoRoutingProvider):
+        def reverse(self, coordinate: tuple[float, float]) -> ReverseLocation:
+            raise ProviderError(
+                "provider_unavailable",
+                "Duty-change location lookup failed. Try again.",
+                retryable=True,
+                status_code=503,
+            )
+
+    monkeypatch.setattr(
+        "trips.service.get_provider",
+        lambda: RequiredLocationFailureProvider(),
+    )
+    response = APIClient().post("/api/v1/trip-plans", payload(), format="json")
+
+    assert response.status_code == 503
+    assert response.json()["error"] == {
+        "code": "provider_unavailable",
+        "message": "Duty-change location lookup failed. Try again.",
+        "field": None,
+        "retryable": True,
+    }
+
+
 def test_nearby_fuel_is_a_suggestion_and_does_not_move_route_event() -> None:
     class SuggestionProvider(DemoRoutingProvider):
         def nearby_fuel(self, coordinate: tuple[float, float]) -> NearbyPlace:
@@ -311,7 +499,7 @@ def test_nearby_fuel_is_a_suggestion_and_does_not_move_route_event() -> None:
     service = TripPlannerService(SuggestionProvider())
     warnings: list[str] = []
 
-    enriched = service._enrich_stops([fuel_event], warnings)
+    enriched = service._enrich_fuel_suggestions([fuel_event], warnings)
 
     assert enriched[0].start_coordinates == route_coordinate
     assert enriched[0].end_coordinates == route_coordinate
@@ -347,7 +535,7 @@ def test_distant_fuel_suggestion_is_ignored_with_warning() -> None:
     service = TripPlannerService(DistantSuggestionProvider())
     warnings: list[str] = []
 
-    enriched = service._enrich_stops([fuel_event], warnings)
+    enriched = service._enrich_fuel_suggestions([fuel_event], warnings)
 
     assert enriched[0] == fuel_event
     assert len(warnings) == 1
@@ -356,17 +544,13 @@ def test_distant_fuel_suggestion_is_ignored_with_warning() -> None:
     assert "not added to route" in warnings[0]
 
 
-def test_optional_stop_enrichment_stops_after_first_provider_failure() -> None:
+def test_optional_fuel_enrichment_stops_after_first_provider_failure() -> None:
     class FailingLookupProvider(DemoRoutingProvider):
         def __init__(self) -> None:
             self.lookup_calls: list[str] = []
 
         def nearby_fuel(self, coordinate: tuple[float, float]) -> NearbyPlace:
             self.lookup_calls.append("nearby_fuel")
-            raise ProviderError("provider_unavailable", "Optional lookup failed.")
-
-        def reverse(self, coordinate: tuple[float, float]) -> ReverseLocation:
-            self.lookup_calls.append("reverse")
             raise ProviderError("provider_unavailable", "Optional lookup failed.")
 
     start = datetime(2026, 8, 25, 12, tzinfo=UTC)
@@ -408,15 +592,15 @@ def test_optional_stop_enrichment_stops_after_first_provider_failure() -> None:
     provider = FailingLookupProvider()
     warnings: list[str] = []
 
-    enriched = TripPlannerService(provider)._enrich_stops(events, warnings)
+    enriched = TripPlannerService(provider)._enrich_fuel_suggestions(events, warnings)
 
     assert enriched == events
     assert provider.lookup_calls == ["nearby_fuel"]
     assert len(warnings) == 1
-    assert "remaining optional lookups were skipped" in warnings[0]
+    assert "fuel lookups were skipped" in warnings[0]
 
 
-def test_optional_stop_enrichment_uses_bounded_concurrency_and_preserves_events() -> None:
+def test_required_location_enrichment_uses_bounded_concurrency_and_preserves_events() -> None:
     class DelayedLookupProvider(DemoRoutingProvider):
         def __init__(self) -> None:
             self.in_flight = 0
@@ -464,9 +648,14 @@ def test_optional_stop_enrichment_uses_bounded_concurrency_and_preserves_events(
     ]
     provider = DelayedLookupProvider()
 
-    enriched = TripPlannerService(provider)._enrich_stops(events, [])
+    points = {route_mile_key(event.start_mile): event.start_coordinates for event in events}
+    enriched, resolved = TripPlannerService(provider)._resolve_duty_locations(
+        events,
+        points,
+    )
 
     assert provider.max_in_flight == 4
+    assert len(resolved) == len(points)
     assert [event.id for event in enriched] == [event.id for event in events]
     for original, result in zip(events, enriched, strict=True):
         assert result.start_at == original.start_at
@@ -479,7 +668,7 @@ def test_optional_stop_enrichment_uses_bounded_concurrency_and_preserves_events(
         assert result.start_location.startswith("Stop ")
 
 
-def test_optional_stop_enrichment_deduplicates_identical_lookups() -> None:
+def test_required_location_enrichment_deduplicates_identical_lookups() -> None:
     class CountingLookupProvider(DemoRoutingProvider):
         def __init__(self) -> None:
             self.reverse_calls = 0
@@ -512,10 +701,214 @@ def test_optional_stop_enrichment_deduplicates_identical_lookups() -> None:
     )
     provider = CountingLookupProvider()
 
-    enriched = TripPlannerService(provider)._enrich_stops([first, second], [])
+    points = {route_mile_key(first.start_mile): first.start_coordinates}
+    enriched, resolved = TripPlannerService(provider)._resolve_duty_locations(
+        [first, second],
+        points,
+    )
 
     assert provider.reverse_calls == 1
+    assert resolved == {500.0: "Shared rest location"}
     assert [event.start_location for event in enriched] == [
         "Shared rest location",
         "Shared rest location",
     ]
+
+
+def test_resolved_fuel_location_propagates_across_adjacent_driving_events() -> None:
+    class FuelLocationProvider(DemoRoutingProvider):
+        def reverse(self, coordinate: tuple[float, float]) -> ReverseLocation:
+            return ReverseLocation("Amarillo, TX")
+
+        def nearby_fuel(self, coordinate: tuple[float, float]) -> NearbyPlace:
+            lon, lat = coordinate
+            return NearbyPlace("Roadrunner Travel Center", lat, lon)
+
+    start = datetime(2026, 8, 25, 12, tzinfo=UTC)
+    stop_coordinate = (-101.8313, 35.222)
+    first_drive = DutyEvent(
+        id="drive-1",
+        status="driving",
+        event_type="driving",
+        start_at=start,
+        end_at=start + timedelta(hours=8),
+        start_location="Richmond, VA",
+        end_location="Route mile 950",
+        start_coordinates=(-77.436, 37.5407),
+        end_coordinates=stop_coordinate,
+        start_mile=0,
+        end_mile=950,
+        miles_driven=950,
+        note="Drive west.",
+    )
+    fuel = DutyEvent(
+        id="fuel-1",
+        status="on_duty",
+        event_type="fuel",
+        start_at=first_drive.end_at,
+        end_at=first_drive.end_at + timedelta(minutes=30),
+        start_location="Route mile 950",
+        end_location="Route mile 950",
+        start_coordinates=stop_coordinate,
+        end_coordinates=stop_coordinate,
+        start_mile=950,
+        end_mile=950,
+        miles_driven=0,
+        note="Fuel stop.",
+    )
+    second_drive = replace(
+        first_drive,
+        id="drive-2",
+        start_at=fuel.end_at,
+        end_at=fuel.end_at + timedelta(hours=2),
+        start_location="Route mile 950",
+        end_location="Dallas, TX",
+        start_coordinates=stop_coordinate,
+        end_coordinates=(-96.797, 32.7767),
+        start_mile=950,
+        end_mile=1100,
+        miles_driven=150,
+    )
+    events = [first_drive, fuel, second_drive]
+    provider = FuelLocationProvider()
+    service = TripPlannerService(provider)
+
+    resolved_events, labels = service._resolve_duty_locations(
+        events,
+        {950.0: stop_coordinate},
+    )
+    enriched = service._enrich_fuel_suggestions(resolved_events, [])
+
+    assert labels == {950.0: "Amarillo, TX"}
+    assert enriched[0].end_location == "Amarillo, TX"
+    assert enriched[1].start_location == enriched[1].end_location == "Amarillo, TX"
+    assert enriched[2].start_location == "Amarillo, TX"
+    assert enriched[1].start_coordinates == stop_coordinate
+    assert enriched[1].end_coordinates == stop_coordinate
+    assert "Nearby fuel suggestion: Roadrunner Travel Center" in enriched[1].note
+    assert [event.id for event in enriched] == [event.id for event in events]
+    assert [event.start_at for event in enriched] == [event.start_at for event in events]
+    assert [event.end_at for event in enriched] == [event.end_at for event in events]
+    assert [event.miles_driven for event in enriched] == [event.miles_driven for event in events]
+
+
+def test_required_and_optional_lookups_share_one_concurrency_pool() -> None:
+    class CoordinatedProvider(DemoRoutingProvider):
+        def __init__(self) -> None:
+            self.reverse_started = Event()
+            self.fuel_started = Event()
+
+        def reverse(self, coordinate: tuple[float, float]) -> ReverseLocation:
+            self.reverse_started.set()
+            assert self.fuel_started.wait(1), "fuel lookup did not overlap reverse lookup"
+            return ReverseLocation("Amarillo, TX")
+
+        def nearby_fuel(self, coordinate: tuple[float, float]) -> NearbyPlace:
+            self.fuel_started.set()
+            assert self.reverse_started.wait(1), "reverse lookup did not overlap fuel lookup"
+            lon, lat = coordinate
+            return NearbyPlace("Roadrunner Travel Center", lat, lon)
+
+    start = datetime(2026, 8, 25, 12, tzinfo=UTC)
+    coordinate = (-101.8313, 35.222)
+    fuel = DutyEvent(
+        id="fuel-1",
+        status="on_duty",
+        event_type="fuel",
+        start_at=start,
+        end_at=start + timedelta(minutes=30),
+        start_location="Route mile 950",
+        end_location="Route mile 950",
+        start_coordinates=coordinate,
+        end_coordinates=coordinate,
+        start_mile=950,
+        end_mile=950,
+        miles_driven=0,
+        note="Fuel stop.",
+    )
+    provider = CoordinatedProvider()
+
+    enriched, resolved = TripPlannerService(provider)._enrich_provider_locations(
+        [fuel],
+        {950.0: coordinate},
+        [],
+    )
+
+    assert provider.reverse_started.is_set()
+    assert provider.fuel_started.is_set()
+    assert resolved == {950.0: "Amarillo, TX"}
+    assert enriched[0].start_location == "Amarillo, TX"
+    assert "Roadrunner Travel Center" in enriched[0].note
+
+
+def test_required_duty_locations_are_not_limited_to_optional_lookup_cap() -> None:
+    class CountingProvider(DemoRoutingProvider):
+        def __init__(self) -> None:
+            self.reverse_calls = 0
+            self.lock = Lock()
+
+        def reverse(self, coordinate: tuple[float, float]) -> ReverseLocation:
+            with self.lock:
+                self.reverse_calls += 1
+            lon, _lat = coordinate
+            return ReverseLocation(f"City {abs(lon):.0f}, TX")
+
+    start = datetime(2026, 8, 25, 12, tzinfo=UTC)
+    events = [
+        DutyEvent(
+            id=f"rest-{index}",
+            status="off_duty",
+            event_type="rest",
+            start_at=start + timedelta(hours=index * 10),
+            end_at=start + timedelta(hours=(index + 1) * 10),
+            start_location=f"Route mile {100 + index}",
+            end_location=f"Route mile {100 + index}",
+            start_coordinates=(-90.0 - index, 35.0),
+            end_coordinates=(-90.0 - index, 35.0),
+            start_mile=100 + index,
+            end_mile=100 + index,
+            miles_driven=0,
+            note="Ten-hour rest.",
+        )
+        for index in range(13)
+    ]
+    points = {route_mile_key(event.start_mile): event.start_coordinates for event in events}
+    provider = CountingProvider()
+    enriched, resolved = TripPlannerService(provider)._resolve_duty_locations(
+        events,
+        points,
+    )
+
+    assert provider.reverse_calls == 13
+    assert len(resolved) == 13
+    assert all(not event.start_location.startswith("Route mile ") for event in enriched)
+
+
+def test_required_location_failure_prevents_noncompliant_log_output() -> None:
+    class FailingProvider(DemoRoutingProvider):
+        def reverse(self, coordinate: tuple[float, float]) -> ReverseLocation:
+            raise ProviderError("provider_unavailable", "Reverse lookup failed.")
+
+    start = datetime(2026, 8, 25, 12, tzinfo=UTC)
+    event = DutyEvent(
+        id="rest-1",
+        status="off_duty",
+        event_type="rest",
+        start_at=start,
+        end_at=start + timedelta(hours=10),
+        start_location="Route mile 500",
+        end_location="Route mile 500",
+        start_coordinates=(-100.0, 35.0),
+        end_coordinates=(-100.0, 35.0),
+        start_mile=500,
+        end_mile=500,
+        miles_driven=0,
+        note="Ten-hour rest.",
+    )
+    with pytest.raises(ProviderError) as raised:
+        TripPlannerService(FailingProvider())._resolve_duty_locations(
+            [event],
+            {500.0: event.start_coordinates},
+        )
+
+    assert raised.value.code == "provider_unavailable"

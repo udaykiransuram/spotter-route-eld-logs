@@ -119,7 +119,10 @@ class DemoRoutingProvider:
             key=lambda location: haversine_miles((lon, lat), location.coordinate),
         )
         timezone = _timezone_for_longitude(lon)
-        return ReverseLocation(nearest.label, timezone)
+        label = (
+            f"{nearest.city}, {nearest.state}" if nearest.city and nearest.state else nearest.label
+        )
+        return ReverseLocation(label, timezone)
 
     def close(self) -> None:
         return None

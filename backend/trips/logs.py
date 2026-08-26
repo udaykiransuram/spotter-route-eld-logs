@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from trips.domain import DutyEvent, DutyStatus, RouteLocator, RouteResult
+from trips.domain import (
+    ROUTE_MILE_PREFIX,
+    DutyEvent,
+    DutyStatus,
+    RouteLocator,
+    RouteResult,
+    route_mile_key,
+)
 
 STATUSES: tuple[DutyStatus, ...] = (
     "off_duty",
@@ -20,12 +28,15 @@ def build_daily_logs(
     timezone_name: str,
     route: RouteResult,
     initial_cycle_used_hours: float,
+    *,
+    resolved_route_locations: Mapping[float, str] | None = None,
 ) -> list[dict[str, object]]:
     if not events:
         return []
 
     zone = ZoneInfo(timezone_name)
     locator = RouteLocator(route)
+    location_labels = resolved_route_locations or {}
     first_date = events[0].start_at.astimezone(zone).date()
     # An event ending exactly at midnight does not add an empty log sheet.
     final_instant = events[-1].end_at - timedelta(microseconds=1)
@@ -46,8 +57,14 @@ def build_daily_logs(
             day_start=day_start,
             day_end=day_end,
             locator=locator,
+            resolved_route_locations=location_labels,
             trip_completed_at=events[-1].end_at,
-            final_location=events[-1].end_location,
+            final_location=_location_at(
+                events[-1],
+                events[-1].end_at,
+                locator,
+                location_labels,
+            ),
             final_status=events[-1].status,
         )
         status_totals = _status_totals(segments)
@@ -68,6 +85,7 @@ def build_daily_logs(
                         touching[0],
                         max(touching[0].start_at, day_start.astimezone(UTC)),
                         locator,
+                        location_labels,
                     )
                     if touching
                     else "Off duty"
@@ -77,6 +95,7 @@ def build_daily_logs(
                         touching[-1],
                         min(touching[-1].end_at, day_end.astimezone(UTC)),
                         locator,
+                        location_labels,
                     )
                     if touching
                     else "Off duty"
@@ -126,6 +145,58 @@ def build_daily_logs(
     for log, cents in zip(logs, day_cents):
         log["total_miles"] = cents / 100
     return logs
+
+
+def collect_log_location_points(
+    events: list[DutyEvent],
+    timezone_name: str,
+    route: RouteResult,
+) -> dict[float, tuple[float, float]]:
+    """Collect unresolved event boundaries and local-midnight route positions.
+
+    The returned route-mile keys let one reverse-geocoded label be reused by the
+    driving event before a stop, the stop itself, the following drive, and the
+    daily-log projection.
+    """
+
+    if not events:
+        return {}
+
+    points: dict[float, tuple[float, float]] = {}
+    for event in events:
+        if event.start_location.startswith(ROUTE_MILE_PREFIX):
+            points.setdefault(route_mile_key(event.start_mile), event.start_coordinates)
+        if event.end_location.startswith(ROUTE_MILE_PREFIX):
+            points.setdefault(route_mile_key(event.end_mile), event.end_coordinates)
+
+    zone = ZoneInfo(timezone_name)
+    locator = RouteLocator(route)
+    first_date = events[0].start_at.astimezone(zone).date()
+    final_instant = events[-1].end_at.astimezone(UTC)
+    midnight_date = first_date + timedelta(days=1)
+
+    while True:
+        midnight = datetime.combine(midnight_date, time.min, tzinfo=zone).astimezone(UTC)
+        if midnight >= final_instant:
+            break
+        active_event = next(
+            (
+                event
+                for event in events
+                if event.start_at.astimezone(UTC) <= midnight < event.end_at.astimezone(UTC)
+            ),
+            None,
+        )
+        if active_event is not None:
+            route_mile = _route_mile_at(active_event, midnight)
+            if locator.label_at(route_mile).startswith(ROUTE_MILE_PREFIX):
+                points.setdefault(
+                    route_mile_key(route_mile),
+                    locator.coordinate_at(route_mile),
+                )
+        midnight_date += timedelta(days=1)
+
+    return points
 
 
 def _overlaps(event: DutyEvent, day_start: datetime, day_end: datetime) -> bool:
@@ -252,22 +323,40 @@ def _elapsed_on_duty_hours(
     return seconds / 3600
 
 
-def _location_at(event: DutyEvent, instant: datetime, locator: RouteLocator) -> str:
+def _route_mile_at(event: DutyEvent, instant: datetime) -> float:
     instant_utc = instant.astimezone(UTC)
     start_utc = event.start_at.astimezone(UTC)
     end_utc = event.end_at.astimezone(UTC)
     if instant_utc <= start_utc:
-        return event.start_location
+        return event.start_mile
     if instant_utc >= end_utc:
-        return event.end_location
+        return event.end_mile
     if event.status != "driving" or event.end_mile <= event.start_mile:
-        return event.start_location
+        return event.start_mile
 
     event_seconds = (end_utc - start_utc).total_seconds()
     elapsed_seconds = (instant_utc - start_utc).total_seconds()
-    route_mile = (
-        event.start_mile + (event.end_mile - event.start_mile) * elapsed_seconds / event_seconds
-    )
+    return event.start_mile + (event.end_mile - event.start_mile) * elapsed_seconds / event_seconds
+
+
+def _location_at(
+    event: DutyEvent,
+    instant: datetime,
+    locator: RouteLocator,
+    resolved_route_locations: Mapping[float, str],
+) -> str:
+    route_mile = _route_mile_at(event, instant)
+    resolved = resolved_route_locations.get(route_mile_key(route_mile))
+    if resolved:
+        return resolved
+
+    instant_utc = instant.astimezone(UTC)
+    if instant_utc <= event.start_at.astimezone(UTC):
+        return event.start_location
+    if instant_utc >= event.end_at.astimezone(UTC):
+        return event.end_location
+    if event.status != "driving" or event.end_mile <= event.start_mile:
+        return event.start_location
     return locator.label_at(route_mile)
 
 
@@ -279,6 +368,7 @@ def _remarks_for_day(
     day_start: datetime,
     day_end: datetime,
     locator: RouteLocator,
+    resolved_route_locations: Mapping[float, str],
     trip_completed_at: datetime,
     final_location: str,
     final_status: DutyStatus,
@@ -289,11 +379,21 @@ def _remarks_for_day(
         if local_start.date() == day:
             remark_at = event.start_at
             note = event.note
-            location = event.start_location
+            location = _location_at(
+                event,
+                event.start_at,
+                locator,
+                resolved_route_locations,
+            )
         else:
             remark_at = day_start
             note = f"Continued: {event.note}"
-            location = _location_at(event, day_start, locator)
+            location = _location_at(
+                event,
+                day_start,
+                locator,
+                resolved_route_locations,
+            )
         minute = _grid_minute(remark_at, day_start, day_end)
         local_remark_at = remark_at.astimezone(zone)
         remarks.append(

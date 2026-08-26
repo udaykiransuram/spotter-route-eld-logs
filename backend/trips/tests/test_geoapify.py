@@ -327,6 +327,8 @@ def test_fuel_and_reverse_lookup_contracts() -> None:
                 "results": [
                     {
                         "formatted": "Amarillo, TX, USA",
+                        "city": "Amarillo",
+                        "state_code": "TX",
                         "timezone": {"name": "America/Chicago"},
                     }
                 ]
@@ -341,5 +343,19 @@ def test_fuel_and_reverse_lookup_contracts() -> None:
         provider.client.close()
 
     assert fuel.label == "Roadrunner Travel Center"
-    assert reverse.label == "Amarillo, TX, USA"
+    assert reverse.label == "Amarillo, TX"
     assert reverse.timezone == "America/Chicago"
+
+
+def test_reverse_lookup_rejects_an_unresolved_location() -> None:
+    provider = GeoapifyRoutingProvider(
+        "test-key",
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, json={"results": []})),
+    )
+    try:
+        with pytest.raises(ProviderError) as raised:
+            provider.reverse((-100, 35))
+    finally:
+        provider.client.close()
+
+    assert raised.value.code == "location_not_found"

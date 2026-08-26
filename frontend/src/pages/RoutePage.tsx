@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, generateTripPlan } from "../api/client";
+import { ApiError, generateTripPlan, prepareApiConnection } from "../api/client";
 import { AppHeader } from "../components/AppHeader";
+import { RouteGenerationLoading } from "../components/RouteGenerationLoading";
 import { TripForm } from "../components/TripForm";
 import { TripPlanPreview } from "../components/TripPlanPreview";
 import { usePlan } from "../state/plan-context";
@@ -30,18 +31,29 @@ function prepareRouteMap() {
 }
 
 export function RoutePage() {
-  const { plan, savePlan } = usePlan();
+  const { plan, savePlan, clearPlan } = usePlan();
   const [loading, setLoading] = useState(false);
+  const [pendingRequest, setPendingRequest] = useState<TripPlanRequest | null>(null);
   const [error, setError] = useState("");
   const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
   const activeRequestRef = useRef<AbortController | null>(null);
   const pendingFocusPlanIdRef = useRef<string | null>(null);
 
-  useEffect(() => () => activeRequestRef.current?.abort(), []);
+  useEffect(() => {
+    prepareApiConnection();
+    return () => activeRequestRef.current?.abort();
+  }, []);
 
   const handlePrepareResults = useCallback(() => {
     prepareRouteMap();
   }, []);
+
+  const handleFormChange = useCallback(() => {
+    pendingFocusPlanIdRef.current = null;
+    setError("");
+    setSelectedStopId(null);
+    if (plan) clearPlan();
+  }, [clearPlan, plan]);
 
   const handleGenerate = useCallback(async (request: TripPlanRequest) => {
     prepareRouteMap();
@@ -50,6 +62,7 @@ export function RoutePage() {
     activeRequestRef.current = controller;
     const timeout = window.setTimeout(() => controller.abort(), TRIP_REQUEST_TIMEOUT_MS);
     setLoading(true);
+    setPendingRequest(request);
     setError("");
     try {
       const generated = await generateTripPlan(request, controller.signal);
@@ -68,6 +81,7 @@ export function RoutePage() {
       if (activeRequestRef.current === controller) {
         activeRequestRef.current = null;
         setLoading(false);
+        setPendingRequest(null);
       }
     }
   }, [savePlan]);
@@ -88,6 +102,7 @@ export function RoutePage() {
             loading={loading}
             apiError={error}
             initialRequest={plan?.request}
+            onFormChange={handleFormChange}
             onPrepareResults={handlePrepareResults}
           />
           {plan ? (
@@ -104,8 +119,11 @@ export function RoutePage() {
               selectedStopId={selectedStopId}
               onSelectStop={setSelectedStopId}
               onReady={handleResultsReady}
+              updating={loading}
             />
           </Suspense>
+        ) : loading && pendingRequest ? (
+          <RouteGenerationLoading request={pendingRequest} />
         ) : (
           <section className="empty-results" aria-labelledby="empty-results-title">
             <div className="empty-results__copy">

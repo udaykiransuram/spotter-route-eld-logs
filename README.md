@@ -13,6 +13,7 @@ A stateless Django and React assessment app that builds a heavy-truck route from
 - MapLibre with a calmly restyled OpenFreeMap Liberty basemap and visible provider attribution.
 - Intent-based loading for the route map and log screens, print-only SVG rendering, cached autocomplete results, and bounded concurrent optional stop lookups.
 - One canonical `DutyEvent` sequence used by the stops, itinerary, summary, and daily log projections.
+- Reverse-geocoded city/state labels shared across adjacent duty events and midnight log continuations, while nearby fuel stations remain suggestions rather than unmodeled route detours.
 - A code-native SVG recreation of the supplied paper-log layout, with sharp vector labels, rules, duty traces, fullscreen viewing, and print/PDF controls. The original `blank-paper-log.png` remains only as the visual reference.
 
 ## Screenshots
@@ -184,7 +185,7 @@ Anonymous autocomplete and trip-generation requests have best-effort process-loc
 
 Split sleeper berth, short-haul exceptions, adverse-condition extensions, team driving, personal conveyance, traffic, and weather are intentionally excluded.
 
-Daily sheets are split at midnight in the home-terminal timezone, with exactly one primary paper-log sheet generated for every calendar day touched by the trip. A driving event crossing midnight is interpolated to the correct route position for that sheet's From/To values and remarks. Time before departure and after trip completion is Off Duty, active statuses carry through midnight, the four paper-grid status totals reconcile to 24 hours, and daily mileage reconciles to route mileage. The print layout keeps each full daily sheet together and starts the next sheet on a new PDF page. A trip ending exactly at midnight remains on the prior sheet with a `24:00` completion remark rather than creating an empty next-day sheet. On daylight-saving transition dates, the real 23- or 25-hour interval is projected monotonically onto the 24-hour paper grid and clearly noted.
+Daily sheets are split at midnight in the home-terminal timezone, with exactly one primary paper-log sheet generated for every calendar day touched by the trip. A driving event crossing midnight is interpolated to the correct route position for that sheet's From/To values and remarks. Unique duty-change and midnight positions are reverse-geocoded once per plan, and the resulting city/state label is reused by the driving event before a stop, the stop, the following drive, and the daily sheet. Time before departure and after trip completion is Off Duty, active statuses carry through midnight, the four paper-grid status totals reconcile to 24 hours, and daily mileage reconciles to route mileage. The print layout keeps each full daily sheet together and starts the next sheet on a new PDF page. A trip ending exactly at midnight remains on the prior sheet with a `24:00` completion remark rather than creating an empty next-day sheet. On daylight-saving transition dates, the real 23- or 25-hour interval is projected monotonically onto the 24-hour paper grid and clearly noted.
 
 ## Checks
 
@@ -244,4 +245,5 @@ Before sharing the assessment, verify `GET /api/v1/health` returns HTTP `200` wi
 - The starting cycle value is a simplified scalar; historical eight-day log records are not available, so a full rolling recap cannot be reconstructed.
 - Demo mode uses deterministic interpolated geometry and estimated driving speed. Configure Geoapify for road-level truck routes and real place data.
 - Fuel lookup accepts only suggestions within five straight-line miles and keeps the scheduled marker anchored to the route; it reports the offset and does not claim or add an unmodeled station-driveway detour.
+- Required duty-change reverse geocoding is accuracy-critical. If it is unavailable, generation returns an explicit provider error instead of producing route-mile placeholders in the daily logs.
 - No account, database, saved trip history, collaborative workflow, or server-side PDF archive is included by design.

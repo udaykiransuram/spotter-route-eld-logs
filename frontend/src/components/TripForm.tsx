@@ -46,6 +46,7 @@ interface TripFormProps {
   loading: boolean;
   apiError?: string;
   initialRequest?: TripPlanRequest;
+  onFormChange: () => void;
   onPrepareResults?: () => void;
 }
 
@@ -56,11 +57,17 @@ interface FieldErrors {
   cycle?: string;
 }
 
+const coordinatesMatch = (first: LocationValue, second: LocationValue) => (
+  Math.round(first.lat * 1_000_000) === Math.round(second.lat * 1_000_000)
+  && Math.round(first.lon * 1_000_000) === Math.round(second.lon * 1_000_000)
+);
+
 export const TripForm = memo(function TripForm({
   onGenerate,
   loading,
   apiError,
   initialRequest,
+  onFormChange,
   onPrepareResults,
 }: TripFormProps) {
   const [current, setCurrent] = useState<LocationValue | null>(
@@ -88,22 +95,36 @@ export const TripForm = memo(function TripForm({
 
   const updateMetadata = useCallback((key: keyof TripMetadata, value: string) => {
     setMetadata((previous) => ({ ...previous, [key]: value }));
-  }, []);
+    onFormChange();
+  }, [onFormChange]);
 
   const updateCurrent = useCallback((value: LocationValue | null) => {
     setCurrent(value);
     clearFieldError("current");
-  }, [clearFieldError]);
+    onFormChange();
+  }, [clearFieldError, onFormChange]);
 
   const updatePickup = useCallback((value: LocationValue | null) => {
     setPickup(value);
     clearFieldError("pickup");
-  }, [clearFieldError]);
+    onFormChange();
+  }, [clearFieldError, onFormChange]);
 
   const updateDropoff = useCallback((value: LocationValue | null) => {
     setDropoff(value);
     clearFieldError("dropoff");
-  }, [clearFieldError]);
+    onFormChange();
+  }, [clearFieldError, onFormChange]);
+
+  const updateDepartureAt = useCallback((value: string) => {
+    setDepartureAt(value);
+    onFormChange();
+  }, [onFormChange]);
+
+  const updateTimezone = useCallback((value: string) => {
+    setTimezone(value);
+    onFormChange();
+  }, [onFormChange]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -114,6 +135,13 @@ export const TripForm = memo(function TripForm({
     if (!current) nextErrors.current = "Select a current location from the suggestions.";
     if (!pickup) nextErrors.pickup = "Select a pickup location from the suggestions.";
     if (!dropoff) nextErrors.dropoff = "Select a drop-off location from the suggestions.";
+    if (current && pickup && coordinatesMatch(current, pickup)) {
+      nextErrors.pickup = "Pickup location must differ from current location.";
+    } else if (current && dropoff && coordinatesMatch(current, dropoff)) {
+      nextErrors.dropoff = "Drop-off location must differ from current location.";
+    } else if (pickup && dropoff && coordinatesMatch(pickup, dropoff)) {
+      nextErrors.dropoff = "Drop-off location must differ from pickup location.";
+    }
     const cycle = Number(cycleUsed);
     if (cycleUsed.trim() === "" || !Number.isFinite(cycle) || cycle < 0 || cycle > 70) {
       nextErrors.cycle = "Enter a number from 0 to 70 hours.";
@@ -180,6 +208,7 @@ export const TripForm = memo(function TripForm({
           onChange={(event) => {
             setCycleUsed(event.target.value);
             clearFieldError("cycle");
+            onFormChange();
           }}
           size="small"
           slotProps={{
@@ -211,9 +240,9 @@ export const TripForm = memo(function TripForm({
         <TripLogSettings
           departureAt={departureAt}
           metadata={metadata}
-          onDepartureChange={setDepartureAt}
+          onDepartureChange={updateDepartureAt}
           onMetadataChange={updateMetadata}
-          onTimezoneChange={setTimezone}
+          onTimezoneChange={updateTimezone}
           timezone={timezone}
         />
 

@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { generateTripPlan, suggestLocations } from "./client";
+import {
+  generateTripPlan,
+  prepareApiConnection,
+  readCachedLocationSuggestions,
+  suggestLocations,
+} from "./client";
 import { tripPlanFixture } from "../test/fixture";
 
 describe("API client", () => {
@@ -38,6 +43,26 @@ describe("API client", () => {
     await suggestLocations("Cache Test Place");
     await expect(suggestLocations(" cache test place ")).resolves.toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("exposes normalized cached suggestions for an immediate UI fast path", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ suggestions: [{ id: "fast-1", label: "Fast Cache, TX", lat: 31, lon: -97 }] }),
+    }));
+
+    expect(readCachedLocationSuggestions("Fast Cache Place")).toBeNull();
+    await suggestLocations("Fast Cache Place");
+    expect(readCachedLocationSuggestions(" fast cache place ")).toEqual([
+      { id: "fast-1", label: "Fast Cache, TX", lat: 31, lon: -97 },
+    ]);
+  });
+
+  it("preconnects to the API origin only once", () => {
+    prepareApiConnection();
+    prepareApiConnection();
+    expect(document.head.querySelectorAll("link[data-spotter-api-preconnect]")).toHaveLength(1);
   });
 
   it("posts the typed request and attaches it to the returned plan", async () => {

@@ -71,6 +71,34 @@ describe("Spotter application", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("shows an accessible route-building view until generation completes", async () => {
+    let resolveResponse!: (response: Response) => void;
+    const responsePromise = new Promise<Response>((resolve) => {
+      resolveResponse = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(responsePromise));
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(screen.getByRole("button", { name: "Generate route & logs" }));
+
+    const loadingStatus = await screen.findByRole("status");
+    expect(loadingStatus).toHaveTextContent("Building your route & logs");
+    expect(loadingStatus).toHaveTextContent("This can take up to a minute.");
+    const loadingButton = screen.getByRole("button", { name: "Generating route…" });
+    expect(loadingButton).toBeDisabled();
+    expect(loadingButton.closest("form")).toHaveAttribute("aria-busy", "true");
+
+    resolveResponse({
+      ok: true,
+      status: 200,
+      json: async () => tripPlanFixture,
+    } as Response);
+
+    expect(await screen.findByText("1,350 mi")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("Building your route & logs")).not.toBeInTheDocument());
+  });
+
   it("generates and persists a route, then exposes route instructions and logs", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn().mockResolvedValue({
@@ -130,6 +158,44 @@ describe("Spotter application", () => {
 
   it("keeps an existing result visible when regeneration fails", async () => {
     sessionStorage.setItem(planStorageKey, JSON.stringify({ version: 1, plan: tripPlanFixture }));
+    let resolveResponse!: (response: Response) => void;
+    const responsePromise = new Promise<Response>((resolve) => {
+      resolveResponse = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(responsePromise));
+    const user = userEvent.setup();
+    renderApp();
+
+    expect(await screen.findByText("1,350 mi")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Generate route & logs" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Updating route & logs…");
+    expect(screen.getByText("1,350 mi")).toBeInTheDocument();
+
+    resolveResponse({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: { code: "provider_unavailable", message: "Routing is temporarily unavailable.", field: null, retryable: true } }),
+    } as Response);
+
+    expect(await screen.findByText("Routing is temporarily unavailable.")).toBeInTheDocument();
+    expect(screen.queryByText("Updating route & logs…")).not.toBeInTheDocument();
+    expect(screen.getByText("1,350 mi")).toBeInTheDocument();
+  });
+
+  it("clears a generated route and its stored logs when an input changes", async () => {
+    sessionStorage.setItem(planStorageKey, JSON.stringify({ version: 1, plan: tripPlanFixture }));
+    const user = userEvent.setup();
+    renderApp();
+
+    expect(screen.getByText("1,350 mi")).toBeInTheDocument();
+    await user.clear(screen.getByLabelText("Current cycle used (hours)"));
+
+    expect(screen.queryByText("1,350 mi")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Your route, stops, and logs in one view" })).toBeInTheDocument();
+    expect(sessionStorage.getItem(planStorageKey)).toBeNull();
+  });
+
+  it("clears a route API error as soon as the form changes", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: false,
       status: 503,
@@ -138,10 +204,11 @@ describe("Spotter application", () => {
     const user = userEvent.setup();
     renderApp();
 
-    expect(screen.getByText("1,350 mi")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Generate route & logs" }));
     expect(await screen.findByText("Routing is temporarily unavailable.")).toBeInTheDocument();
-    expect(screen.getByText("1,350 mi")).toBeInTheDocument();
+    await user.clear(screen.getByLabelText("Current cycle used (hours)"));
+
+    expect(screen.queryByText("Routing is temporarily unavailable.")).not.toBeInTheDocument();
   });
 
   it("restores the form values that produced a saved route", async () => {

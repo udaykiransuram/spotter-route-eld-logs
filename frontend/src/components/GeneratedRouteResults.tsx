@@ -4,6 +4,7 @@ import { DirectionsPanel } from "./DirectionsPanel";
 import { ItineraryPanel } from "./ItineraryPanel";
 import { MapFallback } from "./MapFallback";
 import { RouteSummary } from "./RouteSummary";
+import { RouteGenerationUpdate } from "./RouteGenerationLoading";
 
 const RouteMap = lazy(() => import("./RouteMap"));
 
@@ -12,6 +13,7 @@ interface GeneratedRouteResultsProps {
   selectedStopId: string | null;
   onSelectStop: (stopId: string) => void;
   onReady: (planId: string) => void;
+  updating?: boolean;
 }
 
 export function GeneratedRouteResults({
@@ -19,6 +21,7 @@ export function GeneratedRouteResults({
   selectedStopId,
   onSelectStop,
   onReady,
+  updating = false,
 }: GeneratedRouteResultsProps) {
   useEffect(() => onReady(plan.id), [onReady, plan.id]);
 
@@ -30,6 +33,7 @@ export function GeneratedRouteResults({
         tabIndex={-1}
         aria-label="Generated route results"
       >
+        {updating ? <RouteGenerationUpdate /> : null}
         <RouteSummary summary={plan.summary} />
         <Suspense fallback={<MapFallback />}>
           <RouteMap

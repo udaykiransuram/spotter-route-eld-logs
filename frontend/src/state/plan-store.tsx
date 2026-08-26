@@ -1,13 +1,18 @@
 import { type PropsWithChildren, useCallback, useEffect, useMemo, useState } from "react";
 import type { TripPlan } from "../types";
 import { PlanContext } from "./plan-context";
-import { readStoredPlan, storePlan } from "./plan-storage";
+import { readStoredPlan, removeStoredPlan, storePlan } from "./plan-storage";
 
 export function PlanProvider({ children }: PropsWithChildren) {
   const [plan, setPlan] = useState<TripPlan | null>(readStoredPlan);
 
   const savePlan = useCallback((nextPlan: TripPlan) => {
     setPlan(nextPlan);
+  }, []);
+
+  const clearPlan = useCallback(() => {
+    setPlan(null);
+    removeStoredPlan();
   }, []);
 
   useEffect(() => {
@@ -21,6 +26,9 @@ export function PlanProvider({ children }: PropsWithChildren) {
     return () => window.clearTimeout(timer);
   }, [plan]);
 
-  const value = useMemo(() => ({ plan, savePlan }), [plan, savePlan]);
+  const value = useMemo(
+    () => ({ plan, savePlan, clearPlan }),
+    [clearPlan, plan, savePlan],
+  );
   return <PlanContext.Provider value={value}>{children}</PlanContext.Provider>;
 }

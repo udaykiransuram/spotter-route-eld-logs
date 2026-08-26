@@ -30,3 +30,11 @@ export function storePlan(plan: TripPlan) {
     // A generated plan still works in memory if storage is unavailable.
   }
 }
+
+export function removeStoredPlan() {
+  try {
+    window.sessionStorage.removeItem(planStorageKey);
+  } catch {
+    // Clearing in-memory state still removes the generated plan from the UI.
+  }
+}
