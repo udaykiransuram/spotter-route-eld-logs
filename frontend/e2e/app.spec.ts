@@ -162,6 +162,51 @@ test("generates a route, synchronizes stops, and opens filled daily logs", async
   await mapControls.getByRole("button", { name: "Zoom out" }).click();
   await mapControls.getByRole("button", { name: "Fit full route" }).click();
 
+  if (testInfo.project.name === "desktop-chromium") {
+    const routePlan = page.getByRole("complementary", { name: "Route plan" });
+    const initialScrollLayout = await routePlan.evaluate((panel) => {
+      const itinerary = panel.querySelector(".itinerary");
+      if (!(itinerary instanceof HTMLElement)) {
+        throw new Error("Route itinerary is missing");
+      }
+      return {
+        panelClientHeight: panel.clientHeight,
+        panelScrollHeight: panel.scrollHeight,
+        panelOverflow: getComputedStyle(panel).overflowY,
+        itineraryOverflow: getComputedStyle(itinerary).overflowY,
+      };
+    });
+    expect(initialScrollLayout.panelScrollHeight).toBeGreaterThan(initialScrollLayout.panelClientHeight);
+    expect(initialScrollLayout.panelOverflow).toBe("auto");
+    expect(initialScrollLayout.itineraryOverflow).toBe("visible");
+
+    await routePlan.evaluate((panel) => panel.scrollTo({ top: panel.scrollHeight }));
+    const scrolledLayout = await routePlan.evaluate((panel) => {
+      const header = panel.querySelector(".itinerary-panel__header");
+      const attribution = panel.querySelector(".itinerary-panel__attribution");
+      const itinerary = panel.querySelector(".itinerary");
+      if (!(header instanceof HTMLElement)
+        || !(attribution instanceof HTMLElement)
+        || !(itinerary instanceof HTMLElement)) {
+        throw new Error("Route plan chrome is missing");
+      }
+      const panelRect = panel.getBoundingClientRect();
+      return {
+        panelTop: panelRect.top,
+        panelBottom: panelRect.bottom,
+        scrollTop: panel.scrollTop,
+        headerBottom: header.getBoundingClientRect().bottom,
+        attributionBottom: attribution.getBoundingClientRect().bottom,
+        itineraryScrollTop: itinerary.scrollTop,
+      };
+    });
+    expect(scrolledLayout.scrollTop).toBeGreaterThan(0);
+    expect(scrolledLayout.itineraryScrollTop).toBe(0);
+    expect(scrolledLayout.headerBottom).toBeLessThanOrEqual(scrolledLayout.panelTop + 1);
+    expect(scrolledLayout.attributionBottom).toBeLessThanOrEqual(scrolledLayout.panelBottom + 1);
+    await routePlan.evaluate((panel) => panel.scrollTo({ top: 0 }));
+  }
+
   await expect(page.locator(".directions-panel__body li")).toHaveCount(0);
   await page.getByText(/Turn-by-turn route instructions/).click();
   expect(await page.locator(".directions-panel__body li").count()).toBeGreaterThan(0);

@@ -2698,6 +2698,20 @@ button:disabled {
 
   .route-workspace--results .itinerary-panel {
     max-height: none;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-color: #b9c8d3 transparent;
+    scrollbar-width: thin;
+  }
+
+  .route-workspace--results .itinerary-panel__header,
+  .route-workspace--results .itinerary-panel__attribution,
+  .route-workspace--results .itinerary {
+    flex: 0 0 auto;
+  }
+
+  .route-workspace--results .itinerary {
+    overflow: visible;
   }
 }
 
