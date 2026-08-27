@@ -2692,6 +2692,11 @@ button:disabled {
     overflow-y: auto;
   }
 
+  .route-workspace--results .directions-panel.Mui-expanded .directions-panel__body {
+    height: calc(100vh - 156px);
+    max-height: none;
+  }
+
   .route-workspace--results .route-workspace__left {
     overflow-y: auto;
   }

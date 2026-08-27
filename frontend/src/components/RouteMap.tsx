@@ -238,7 +238,7 @@ export default function RouteMap({ plan, selectedStopId, onSelectStop }: RouteMa
         bounds,
         fitBoundsOptions: { padding: mapPadding, maxZoom: 12 },
         attributionControl: false,
-        cooperativeGestures: window.matchMedia("(pointer: coarse)").matches,
+        cooperativeGestures: true,
       });
       mapRef.current = map;
       map.dragRotate.disable();

@@ -232,6 +232,42 @@ test("generates a route, synchronizes stops, and opens filled daily logs", async
   await expect(selectedStop).toContainText("Drop-off");
   await expect(selectedStop).toContainText("Dallas");
 
+  if (testInfo.project.name === "desktop-chromium") {
+    const routeResults = page.getByRole("region", { name: "Generated route results" });
+    const mapShell = page.locator(".route-map-shell");
+    await routeResults.evaluate((results) => results.scrollTo({ top: 0 }));
+    const mapBox = await mapShell.boundingBox();
+    if (!mapBox) throw new Error("Route map is not visible for scroll testing");
+
+    await page.mouse.move(mapBox.x + mapBox.width / 2, mapBox.y + mapBox.height / 2);
+    await page.mouse.wheel(0, 420);
+    await expect.poll(
+      () => routeResults.evaluate((results) => results.scrollTop),
+      { message: "Scrolling over the map should move the route results" },
+    ).toBeGreaterThan(0);
+
+    await routeResults.evaluate((results) => results.scrollTo({ top: results.scrollHeight }));
+    const directionsScrollLayout = await routeResults.evaluate((results) => {
+      const map = results.querySelector(".route-map-shell");
+      const directions = results.querySelector(".directions-panel");
+      if (!(map instanceof HTMLElement) || !(directions instanceof HTMLElement)) {
+        throw new Error("Route result scroll elements are missing");
+      }
+      const resultsRect = results.getBoundingClientRect();
+      return {
+        directionsTop: directions.getBoundingClientRect().top,
+        mapBottom: map.getBoundingClientRect().bottom,
+        maxScrollTop: results.scrollHeight - results.clientHeight,
+        resultsTop: resultsRect.top,
+        scrollTop: results.scrollTop,
+      };
+    });
+    expect(directionsScrollLayout.scrollTop).toBeCloseTo(directionsScrollLayout.maxScrollTop, 0);
+    expect(directionsScrollLayout.directionsTop).toBeLessThanOrEqual(directionsScrollLayout.resultsTop + 28);
+    expect(directionsScrollLayout.mapBottom).toBeLessThanOrEqual(directionsScrollLayout.directionsTop - 12);
+    await routeResults.evaluate((results) => results.scrollTo({ top: 0 }));
+  }
+
   const planBasis = page.getByRole("region", { name: "Plan basis" });
   await planBasis.scrollIntoViewIfNeeded();
   await expect(planBasis).toBeVisible();
